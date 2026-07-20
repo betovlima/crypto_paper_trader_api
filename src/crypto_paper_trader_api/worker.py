@@ -376,16 +376,16 @@ class TraderWorker:
         if not valid_indices:
             raise ValueError("Not enough complete candles for strategy analysis.")
 
-        lower_bound = (
-            self._as_utc(experiment.last_processed_candle_at)
-            if experiment.last_processed_candle_at
-            else self._as_utc(experiment.started_at)
-        )
         pending_indices = [
             index
             for index in valid_indices
-            if self._to_datetime(execution_indicators.iloc[index]["timestamp"]) > lower_bound
-            and index >= 2
+            if index >= 2
+            and self._is_pending_candle(
+                candle_timestamp=self._to_datetime(
+                    execution_indicators.iloc[index]["timestamp"]
+                ),
+                experiment=experiment,
+            )
         ]
         if not pending_indices:
             experiment.next_analysis_at = self._next_boundary(now, experiment.execution_timeframe)
@@ -1207,6 +1207,29 @@ class TraderWorker:
         experiment.consecutive_losses = hybrid.consecutive_losses
         experiment.cooldown_until = hybrid.cooldown_until
         experiment.final_capital = hybrid.final_capital
+
+    def _is_pending_candle(
+        self,
+        candle_timestamp: datetime,
+        experiment: Experiment,
+    ) -> bool:
+        """Return whether a closed candle still needs strategy analysis.
+
+        Persisted ``last_processed_candle_at`` stores the candle opening timestamp, so
+        subsequent recovery must compare opening timestamps. For a brand-new experiment,
+        however, the first eligible candle can start before the experiment and close after
+        it. Comparing only its opening timestamp would delay the first dashboard decision by
+        one additional full timeframe.
+        """
+
+        candle_start = self._as_utc(candle_timestamp)
+        if experiment.last_processed_candle_at is not None:
+            return candle_start > self._as_utc(experiment.last_processed_candle_at)
+
+        candle_end = candle_start + timedelta(
+            seconds=TIMEFRAME_SECONDS[experiment.execution_timeframe]
+        )
+        return candle_end > self._as_utc(experiment.started_at)
 
     @staticmethod
     def _next_boundary(now: datetime, timeframe: str) -> datetime:

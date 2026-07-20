@@ -1,4 +1,4 @@
-# Crypto Paper Trader v0.8.0
+# Crypto Paper Trader v0.9.2
 
 Crypto Paper Trader is a PAPER_ONLY research application for comparing crypto trading techniques with public CoinEx Spot market data. It contains no authenticated order, transfer or withdrawal implementation.
 
@@ -160,3 +160,11 @@ curl -X POST \
 Do not create `VITE_ADMIN_API_KEY` and do not place the key in frontend source code.
 When `ADMIN_API_KEY` is absent, the endpoint fails closed with HTTP 503. A missing or
 incorrect request key returns HTTP 401.
+## v0.9.2 decision-state correction
+
+For a newly started experiment, the first eligible decision candle may begin before the
+experiment start and close after it. The worker now compares the candle close with the
+experiment start for the first analysis. This prevents the dashboard from waiting one extra
+full timeframe before showing the Hybrid/ML, EMA and RSI/ADX decision state. Recovery after
+a previously processed candle continues to compare candle opening timestamps, preventing
+duplicate decisions.
