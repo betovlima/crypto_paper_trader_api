@@ -117,6 +117,33 @@ class ExperimentResponse(BaseModel):
     error_message: str | None
 
 
+class StrategyComparisonItem(BaseModel):
+    strategy_code: str
+    display_name: str
+    description: str
+    latest_decision: dict[str, Any] | None
+
+
+class StrategyComparisonResponse(BaseModel):
+    experiment_id: str
+    market: str
+    updated_at: datetime | None
+    strategies: list[StrategyComparisonItem]
+
+
+class StrategyComparisonHistoryItem(BaseModel):
+    strategy_code: str
+    display_name: str
+    decisions: list[dict[str, Any]]
+
+
+class StrategyComparisonHistoryResponse(BaseModel):
+    experiment_id: str
+    market: str
+    limit_per_strategy: int
+    strategies: list[StrategyComparisonHistoryItem]
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     mode: Literal["PAPER_ONLY"] = "PAPER_ONLY"
