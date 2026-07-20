@@ -4,7 +4,7 @@ version = "0.9.0"
 description = "A PAPER_ONLY signal-first crypto strategy research application with FastAPI, SQLite, EMA 9 and XGBoost."
 authors = ["Roberto"]
 readme = "README.md"
-packages = [{ include = "coinex_paper_trader", from = "src" }]
+packages = [{ include = "crypto_paper_trader_api", from = "src" }]
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"

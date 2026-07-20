@@ -4,11 +4,11 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from coinex_paper_trader.config import Settings
-from coinex_paper_trader.execution_costs import ExecutionCosts
-from coinex_paper_trader.models import StrategyAccount
-from coinex_paper_trader.multi_strategy import Ema9Setup91Strategy
-from coinex_paper_trader.strategy_codes import EMA9_SETUP_91, EMA9_SETUP_91_COST_AWARE
+from crypto_paper_trader_api.config import Settings
+from crypto_paper_trader_api.execution_costs import ExecutionCosts
+from crypto_paper_trader_api.models import StrategyAccount
+from crypto_paper_trader_api.multi_strategy import Ema9Setup91Strategy
+from crypto_paper_trader_api.strategy_codes import EMA9_SETUP_91, EMA9_SETUP_91_COST_AWARE
 
 
 def account(code: str) -> StrategyAccount:

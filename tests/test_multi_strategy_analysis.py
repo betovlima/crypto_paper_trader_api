@@ -8,11 +8,11 @@ import pandas as pd
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from coinex_paper_trader.config import Settings
-from coinex_paper_trader.database import Base
-from coinex_paper_trader.execution_costs import ExecutionCosts
-from coinex_paper_trader.models import StrategyDecisionSnapshot
-from coinex_paper_trader.worker import (
+from crypto_paper_trader_api.config import Settings
+from crypto_paper_trader_api.database import Base
+from crypto_paper_trader_api.execution_costs import ExecutionCosts
+from crypto_paper_trader_api.models import StrategyDecisionSnapshot
+from crypto_paper_trader_api.worker import (
     TraderWorker,
     create_experiment_record,
     ensure_strategy_accounts,

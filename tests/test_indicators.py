@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from coinex_paper_trader.indicators import FEATURE_COLUMNS, add_indicators, latest_complete_row
+from crypto_paper_trader_api.indicators import FEATURE_COLUMNS, add_indicators, latest_complete_row
 
 
 def synthetic_candles(rows: int = 320) -> pd.DataFrame:

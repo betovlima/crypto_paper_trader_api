@@ -5,10 +5,10 @@ from zipfile import ZipFile
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from coinex_paper_trader.config import Settings
-from coinex_paper_trader.database import Base
-from coinex_paper_trader.export_builder import ExportBuilder
-from coinex_paper_trader.worker import create_experiment_record, ensure_strategy_accounts
+from crypto_paper_trader_api.config import Settings
+from crypto_paper_trader_api.database import Base
+from crypto_paper_trader_api.export_builder import ExportBuilder
+from crypto_paper_trader_api.worker import create_experiment_record, ensure_strategy_accounts
 
 
 def test_export_is_built_in_memory_without_server_files(tmp_path) -> None:

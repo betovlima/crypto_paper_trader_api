@@ -4,11 +4,11 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
-from coinex_paper_trader.config import Settings
-from coinex_paper_trader.execution_costs import ExecutionCosts
-from coinex_paper_trader.ml_model import ModelPrediction
-from coinex_paper_trader.models import Experiment
-from coinex_paper_trader.strategy import HybridPaperStrategy
+from crypto_paper_trader_api.config import Settings
+from crypto_paper_trader_api.execution_costs import ExecutionCosts
+from crypto_paper_trader_api.ml_model import ModelPrediction
+from crypto_paper_trader_api.models import Experiment
+from crypto_paper_trader_api.strategy import HybridPaperStrategy
 
 
 def prediction(expected_return: float = 0.02) -> ModelPrediction:

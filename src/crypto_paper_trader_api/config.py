@@ -104,7 +104,7 @@ class Settings(BaseSettings):
     def resolved_database_url(self) -> str:
         if self.database_url:
             return self.database_url
-        database_path = self.resolved_data_dir / "coinex_paper_trader.db"
+        database_path = self.resolved_data_dir / "crypto_paper_trader_api.db"
         return f"sqlite:///{database_path.as_posix()}"
 
     @property

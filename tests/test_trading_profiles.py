@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from coinex_paper_trader.config import Settings
-from coinex_paper_trader.trading_profiles import (
+from crypto_paper_trader_api.config import Settings
+from crypto_paper_trader_api.trading_profiles import (
     BALANCED_INTRADAY,
     CONSERVATIVE_SWING,
     FAST_INTRADAY,
     get_trading_profile,
     list_trading_profiles,
 )
-from coinex_paper_trader.worker import create_experiment_record
+from crypto_paper_trader_api.worker import create_experiment_record
 
 
 def test_profiles_expose_distinct_timeframes_and_ema_structures() -> None:

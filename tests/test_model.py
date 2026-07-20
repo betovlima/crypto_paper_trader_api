@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from coinex_paper_trader.indicators import add_indicators
-from coinex_paper_trader.ml_model import XGBoostDirectionModel
+from crypto_paper_trader_api.indicators import add_indicators
+from crypto_paper_trader_api.ml_model import XGBoostDirectionModel
 
 
 def test_model_returns_a_probability() -> None:

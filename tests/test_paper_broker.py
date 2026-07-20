@@ -5,11 +5,11 @@ from datetime import datetime, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from coinex_paper_trader.config import Settings
-from coinex_paper_trader.database import Base
-from coinex_paper_trader.execution_costs import ExecutionCosts
-from coinex_paper_trader.models import Experiment
-from coinex_paper_trader.paper_broker import PaperBroker
+from crypto_paper_trader_api.config import Settings
+from crypto_paper_trader_api.database import Base
+from crypto_paper_trader_api.execution_costs import ExecutionCosts
+from crypto_paper_trader_api.models import Experiment
+from crypto_paper_trader_api.paper_broker import PaperBroker
 
 
 def make_experiment() -> Experiment:

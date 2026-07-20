@@ -95,7 +95,7 @@ The default fallback for a CoinEx VIP 0 Spot account is a 0.20% taker fee per ex
 cd crypto_paper_trader_api
 poetry config virtualenvs.in-project true
 poetry install
-poetry run uvicorn coinex_paper_trader.app:app --app-dir src --host 0.0.0.0 --port 8000 --reload
+poetry run uvicorn crypto_paper_trader_api.app:app --app-dir src --host 0.0.0.0 --port 8000 --reload
 ```
 
 Run tests:

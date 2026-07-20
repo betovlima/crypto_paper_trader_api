@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from coinex_paper_trader.config import Settings
-from coinex_paper_trader.execution_costs import ExecutionCosts
-from coinex_paper_trader.models import StrategyAccount
-from coinex_paper_trader.worker import TraderWorker
+from crypto_paper_trader_api.config import Settings
+from crypto_paper_trader_api.execution_costs import ExecutionCosts
+from crypto_paper_trader_api.models import StrategyAccount
+from crypto_paper_trader_api.worker import TraderWorker
 
 
 def worker_without_client(settings: Settings) -> TraderWorker:
