@@ -184,3 +184,11 @@ The comparison dashboard uses two read-only endpoints with separate responsibili
 - `GET /api/v1/experiments/{experiment_id}/strategy-comparison/history?limit=4` returns recent persisted decisions grouped by strategy.
 
 Neither endpoint calculates indicators, trains the model, executes trades, or modifies experiment state. Those responsibilities remain in the worker.
+
+## Railway deployment persistence
+
+Production deployments must attach a Railway Volume to the API service at `/data`.
+The application refuses to start on Railway when no persistent volume is detected,
+preventing experiments from silently running on ephemeral storage. When the API
+restarts, experiments persisted with status `RUNNING` or `STOP_REQUESTED` are picked
+up automatically by the worker and continue until their original scheduled end time.

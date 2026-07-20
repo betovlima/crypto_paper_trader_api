@@ -52,6 +52,7 @@ export_builder = ExportBuilder()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    settings.validate_persistent_storage()
     init_database()
     if settings.storage_warning:
         logging.getLogger(__name__).warning(settings.storage_warning)
@@ -68,7 +69,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.9.5",
+    version="0.9.6",
     description=(
         "PAPER_ONLY crypto strategy comparison using public CoinEx Spot data. "
         "Technical setups decide entries and exits; fees are applied only to execution "
