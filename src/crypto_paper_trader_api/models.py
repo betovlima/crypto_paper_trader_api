@@ -452,6 +452,12 @@ class StrategyAccount(Base):
     setup_cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_setup_event: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_setup_event_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stop_management_mode: Mapped[str] = mapped_column(String(32), default="N/A")
+    exit_trigger_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_trigger_candle_timestamp: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    exit_trigger_candle_low: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     @property
     def has_open_position(self) -> bool:
@@ -530,6 +536,10 @@ class StrategyAccount(Base):
             "setup_cancel_reason": self.setup_cancel_reason,
             "last_setup_event": self.last_setup_event,
             "last_setup_event_reason": self.last_setup_event_reason,
+            "stop_management_mode": self.stop_management_mode,
+            "exit_trigger_price": self.exit_trigger_price,
+            "exit_trigger_candle_timestamp": self.exit_trigger_candle_timestamp,
+            "exit_trigger_candle_low": self.exit_trigger_candle_low,
         }
 
 
@@ -614,6 +624,9 @@ class StrategyDecisionSnapshot(Base):
     potential_target_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     potential_gross_return: Mapped[float | None] = mapped_column(Float, nullable=True)
     reward_risk_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_management_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    active_stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_trigger_price: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     technical_signal: Mapped[str] = mapped_column(String(24))
     model_signal: Mapped[str] = mapped_column(String(24))

@@ -62,7 +62,7 @@ async def run_analysis(session: Session, experiment, worker: TraderWorker) -> No
     )
 
 
-def test_one_closed_candle_creates_three_strategy_decisions() -> None:
+def test_one_closed_candle_creates_four_strategy_decisions() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     settings = Settings(default_execution_timeframe="30min")
@@ -88,11 +88,12 @@ def test_one_closed_candle_creates_three_strategy_decisions() -> None:
             )
         )
 
-        assert len(decisions) == 3
+        assert len(decisions) == 4
         assert {item.strategy_code for item in decisions} == {
             "CURRENT_HYBRID",
             "EMA_CROSSOVER_COST_AWARE",
             "EMA9_SETUP_91_COST_AWARE",
+            "EMA9_SETUP_91_TREND_FOLLOWER",
         }
         ema9_rows = [item for item in decisions if item.strategy_code.startswith("EMA9")]
         assert all(item.ema_9 is not None for item in ema9_rows)
@@ -121,7 +122,7 @@ def test_downtime_recovery_replays_every_missing_closed_candle() -> None:
         decisions = list(session.scalars(select(StrategyDecisionSnapshot)))
         assert experiment.recovery_status == "COMPLETED"
         assert experiment.recovered_candle_count == 3
-        assert len(decisions) == 9
+        assert len(decisions) == 12
         assert all(item.is_recovered for item in decisions)
         assert experiment.last_processed_candle_at == execution_frame.iloc[-1][
             "timestamp"
@@ -149,7 +150,7 @@ def test_initial_dashboard_snapshot_is_created_without_historical_trade() -> Non
         decisions = list(session.scalars(select(StrategyDecisionSnapshot)))
         trades = list(session.scalars(select(StrategySimulatedTrade)))
 
-        assert len(decisions) == 3
+        assert len(decisions) == 4
         assert trades == []
         assert all(not item.action_executed for item in decisions)
         assert experiment.last_processed_candle_at is not None
