@@ -36,7 +36,9 @@ from .strategy_codes import (
     DIRECT_ENTRY_STRATEGY_CODES,
     DYNAMIC_RISK_STRATEGY_CODES,
     EMA_CROSSOVER_COST_AWARE,
+    EMA9_CLASSIC_STRATEGY_CODES,
     EMA9_STRATEGY_CODES,
+    LARRY_WILLIAMS_91_TREND_FOLLOWER,
     STRATEGY_DISPLAY_NAMES,
 )
 from .trading_profiles import (
@@ -58,7 +60,14 @@ class TraderWorker:
         self.client = CoinExPublicClient(settings)
         self.hybrid_strategy = HybridComparisonStrategy()
         self.ema_crossover_strategy = EmaCrossoverCostAwareStrategy()
-        self.ema9_strategy = Ema9Setup91Strategy(settings=settings, cost_aware=False)
+        self.ema9_classic_strategy = Ema9Setup91Strategy(
+            settings=settings, cost_aware=False, mode=Ema9Setup91Strategy.CLASSIC
+        )
+        self.ema9_trend_strategy = Ema9Setup91Strategy(
+            settings=settings, cost_aware=False, mode=Ema9Setup91Strategy.TREND_FOLLOWER
+        )
+        # Backward-compatible attribute used by older tests/integrations.
+        self.ema9_strategy = self.ema9_classic_strategy
         self.broker = MultiStrategyPaperBroker(settings)
         self._task: asyncio.Task[None] | None = None
         self._wake_event = asyncio.Event()
@@ -623,7 +632,12 @@ class TraderWorker:
                     profile=profile,
                 )
             else:
-                decision = self.ema9_strategy.analyze_candle(
+                ema9_strategy = (
+                    self.ema9_trend_strategy
+                    if account.strategy_code == LARRY_WILLIAMS_91_TREND_FOLLOWER
+                    else self.ema9_classic_strategy
+                )
+                decision = ema9_strategy.analyze_candle(
                     account=account,
                     current_row=execution_row,
                     previous_row=previous_row,
@@ -743,6 +757,12 @@ class TraderWorker:
     ) -> tuple[float | None, str | None]:
         low = float(candle["low"])
         high = float(candle["high"])
+        if (
+            account.strategy_code in EMA9_CLASSIC_STRATEGY_CODES
+            and account.exit_trigger_price is not None
+            and low <= account.exit_trigger_price
+        ):
+            return float(account.exit_trigger_price), "RECOVERED_EMA9_CLASSIC_EXIT"
         protective_levels = [
             value
             for value in (account.stop_loss_price, account.trailing_stop_price)
@@ -847,6 +867,16 @@ class TraderWorker:
             potential_target_price=decision.potential_target_price,
             potential_gross_return=decision.potential_gross_return,
             reward_risk_ratio=decision.reward_risk_ratio,
+            stop_management_mode=account.stop_management_mode,
+            active_stop_price=max(
+                [
+                    value
+                    for value in (account.stop_loss_price, account.trailing_stop_price)
+                    if value is not None
+                ],
+                default=None,
+            ),
+            exit_trigger_price=account.exit_trigger_price,
             technical_signal=decision.technical_signal,
             model_signal=decision.model_signal,
             final_signal=decision.final_signal,
@@ -877,6 +907,12 @@ class TraderWorker:
             if active_profile
             else self.settings.max_daily_loss_pct
         )
+        if (
+            account.strategy_code in EMA9_CLASSIC_STRATEGY_CODES
+            and account.exit_trigger_price is not None
+            and best_bid <= account.exit_trigger_price
+        ):
+            return "LIVE_EMA9_CLASSIC_EXIT"
         protective_levels = [
             value
             for value in (account.stop_loss_price, account.trailing_stop_price)
@@ -1144,6 +1180,7 @@ class TraderWorker:
             "LIVE_TAKE_PROFIT": "The take-profit level was reached during monitoring.",
             "LIVE_TIME_STOP": "The maximum holding time was reached.",
             "LIVE_DAILY_LOSS_LIMIT": "The strategy reached the maximum-loss limit.",
+            "LIVE_EMA9_CLASSIC_EXIT": "The classical Setup 9.1 exit trigger was broken.",
         }.get(event_type, event_type)
 
     @staticmethod
@@ -1320,6 +1357,13 @@ def ensure_strategy_accounts(
     for code in strategy_codes:
         if code in existing:
             existing[code].display_name = STRATEGY_DISPLAY_NAMES[code]
+            existing[code].stop_management_mode = (
+                "TREND_FOLLOWER"
+                if code == LARRY_WILLIAMS_91_TREND_FOLLOWER
+                else "CLASSIC"
+                if code in EMA9_CLASSIC_STRATEGY_CODES
+                else "N/A"
+            )
             continue
         copy_legacy_hybrid = code == CURRENT_HYBRID
         account = StrategyAccount(
@@ -1362,6 +1406,13 @@ def ensure_strategy_accounts(
             consecutive_losses=(experiment.consecutive_losses if copy_legacy_hybrid else 0),
             cooldown_until=(experiment.cooldown_until if copy_legacy_hybrid else None),
             setup_status="IDLE" if code in EMA9_STRATEGY_CODES else "N/A",
+            stop_management_mode=(
+                "TREND_FOLLOWER"
+                if code == LARRY_WILLIAMS_91_TREND_FOLLOWER
+                else "CLASSIC"
+                if code in EMA9_CLASSIC_STRATEGY_CODES
+                else "N/A"
+            ),
         )
         session.add(account)
         existing[code] = account
@@ -1410,8 +1461,8 @@ def create_experiment_record(
         max_equity=initial_capital,
         max_drawdown_pct=0.0,
         consecutive_losses=0,
-        model_name="Signal-first XGBoost + EMA crossover + Larry Williams 9.1",
-        model_version="4.0",
+        model_name="Signal-first XGBoost + EMA crossover + Larry Williams 9.1 Classic/Trend",
+        model_version="4.1",
         recovery_status="IDLE",
         recovered_candle_count=0,
         recovered_trade_count=0,

@@ -1,3 +1,12 @@
+# Release 0.9.9 — Larry Williams Classic vs Trend Follower
+
+This release runs two independent Setup 9.1 paper portfolios:
+
+- **Larry Williams 9.1 Classic**: strict down-to-up EMA 9 reversal on a candle that crosses EMA 9; buy above that candle high; initial stop at that candle low; a later bearish EMA 9 reversal arms an exit below the bearish reversal candle low.
+- **Larry Williams 9.1 Trend Follower**: same entry and initial stop; after entry, the stop follows the low of each newly closed candle and never moves down; the position also exits on a bearish EMA 9 reversal.
+
+Existing `EMA9_SETUP_91_COST_AWARE` accounts are retained and are now labeled as the classic version. Existing experiments automatically receive the new trend-follower account without losing their prior state. SQLite migrations are additive.
+
 # Crypto Paper Trader v0.9.2
 
 Crypto Paper Trader is a PAPER_ONLY research application for comparing crypto trading techniques with public CoinEx Spot market data. It contains no authenticated order, transfer or withdrawal implementation.

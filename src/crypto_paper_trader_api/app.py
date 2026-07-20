@@ -69,7 +69,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.9.7",
+    version="0.9.9",
     description=(
         "PAPER_ONLY crypto strategy comparison using public CoinEx Spot data. "
         "Technical setups decide entries and exits; fees are applied only to execution "

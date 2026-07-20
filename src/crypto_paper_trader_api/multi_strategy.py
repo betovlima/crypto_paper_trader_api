@@ -344,20 +344,44 @@ EmaCrossoverCostAwareStrategy = EmaCrossoverStrategy
 
 
 class Ema9Setup91Strategy:
-    """Larry Williams-style EMA 9 reversal and setup-candle breakout.
+    """Strict Larry Williams Setup 9.1 with selectable stop management.
 
-    The strategy is intentionally signal-first: transaction costs never reject a setup,
-    change its trigger, move its stop or veto its EMA-based exit.
+    Both variants use the same entry setup:
+    - EMA 9 must turn strictly from DOWN to UP on closed candles;
+    - the reversal candle must cross EMA 9;
+    - entry is armed above that candle high;
+    - the initial protective stop is that candle low.
+
+    ``CLASSIC`` keeps the setup stop and later arms an exit below the low of the
+    candle that turns EMA 9 down. ``TREND_FOLLOWER`` raises a candle-low trailing
+    stop after every closed candle and exits when EMA 9 turns bearish.
     """
+
+    CLASSIC = "CLASSIC"
+    TREND_FOLLOWER = "TREND_FOLLOWER"
 
     def __init__(
         self,
         settings: Settings | None = None,
         cost_aware: bool = False,
+        mode: str = CLASSIC,
     ) -> None:
         self.settings = settings
-        # Retained for constructor compatibility; ignored by the signal-first implementation.
-        self.cost_aware = cost_aware
+        self.cost_aware = cost_aware  # retained for backward constructor compatibility
+        normalized_mode = str(mode).strip().upper()
+        if normalized_mode not in {self.CLASSIC, self.TREND_FOLLOWER}:
+            raise ValueError(f"Unsupported EMA9 stop management mode: {mode}")
+        self.mode = normalized_mode
+
+    @staticmethod
+    def _crosses_ema(row: pd.Series, ema_value: float) -> bool:
+        return float(row["low"]) <= ema_value <= float(row["high"])
+
+    @staticmethod
+    def _clear_classic_exit_trigger(account: StrategyAccount) -> None:
+        account.exit_trigger_price = None
+        account.exit_trigger_candle_timestamp = None
+        account.exit_trigger_candle_low = None
 
     def analyze_candle(
         self,
@@ -371,6 +395,8 @@ class Ema9Setup91Strategy:
     ) -> StrategyDecision:
         active_profile = profile or get_trading_profile(None)
         close = float(current_row["close"])
+        high = float(current_row["high"])
+        low = float(current_row["low"])
         ema9 = float(current_row["ema_9"])
         ema9_prev = float(previous_row["ema_9"])
         ema9_prev2 = float(previous_previous_row["ema_9"])
@@ -380,37 +406,149 @@ class Ema9Setup91Strategy:
         direction = (
             "UP" if current_slope > epsilon else "DOWN" if current_slope < -epsilon else "FLAT"
         )
+        candle_crossed_ema9 = self._crosses_ema(current_row, ema9)
 
         account.ema_9_previous = ema9_prev
         account.ema_9 = ema9
         account.ema_9_slope = current_slope
         account.ema_9_direction = direction
+        account.stop_management_mode = self.mode
 
         reasons = [
             f"profile={active_profile.code}",
+            f"stop_management_mode={self.mode}",
             f"ema9={ema9:.8f}",
             f"ema9_previous={ema9_prev:.8f}",
             f"previous_slope={previous_slope:.8f}",
             f"current_slope={current_slope:.8f}",
+            f"candle_crossed_ema9={str(candle_crossed_ema9).lower()}",
             "fees_are_accounting_only=true",
             f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
         ]
 
         if account.has_open_position:
-            if close < ema9:
-                account.last_setup_event = "EMA9_EXIT_SIGNAL"
-                account.last_setup_event_reason = "The candle closed below EMA 9."
-                reasons.append("candle_closed_below_ema9")
+            if self.mode == self.TREND_FOLLOWER:
+                # The candle that has just closed becomes the previous candle for the
+                # next live interval. Its low can only raise, never loosen, the stop.
+                if current_slope < -epsilon:
+                    account.last_setup_event = "EMA9_TREND_EXIT"
+                    account.last_setup_event_reason = "EMA 9 turned down on the closed candle."
+                    reasons.append("ema9_turned_down_trend_exit")
+                    return StrategyDecision(
+                        "SELL",
+                        "NOT_USED",
+                        "SELL",
+                        1,
+                        "; ".join(reasons),
+                        close,
+                        setup_status="IN_POSITION",
+                    )
+                if close < ema9 and candle_crossed_ema9:
+                    account.last_setup_event = "EMA9_CROSS_EXIT"
+                    account.last_setup_event_reason = (
+                        "The bearish reversal candle crossed EMA 9 and closed below it."
+                    )
+                    reasons.append("bearish_reversal_candle_closed_below_ema9")
+                    return StrategyDecision(
+                        "SELL",
+                        "NOT_USED",
+                        "SELL",
+                        1,
+                        "; ".join(reasons),
+                        close,
+                        setup_status="IN_POSITION",
+                    )
+
+                candidate_stop = low
+                active_stop = max(
+                    value
+                    for value in (
+                        float(account.stop_loss_price or 0.0),
+                        float(account.trailing_stop_price or 0.0),
+                    )
+                )
+                if candidate_stop > active_stop and candidate_stop < close:
+                    account.trailing_stop_price = candidate_stop
+                    account.last_setup_event = "CANDLE_LOW_STOP_RAISED"
+                    account.last_setup_event_reason = (
+                        "The trend-following stop was raised to the low of the latest closed candle."
+                    )
+                    reasons.append(f"candle_low_trailing_stop_raised={candidate_stop:.8f}")
+                else:
+                    reasons.append(f"candle_low_stop_unchanged={active_stop:.8f}")
+
+                reasons.append("trend_follower_position_maintained")
                 return StrategyDecision(
-                    "SELL",
+                    "HOLD",
                     "NOT_USED",
-                    "SELL",
+                    "HOLD",
                     1,
                     "; ".join(reasons),
-                    close,
                     setup_status="IN_POSITION",
+                    stop_loss_override=max(
+                        value
+                        for value in (
+                            account.stop_loss_price or 0.0,
+                            account.trailing_stop_price or 0.0,
+                        )
+                    ),
                 )
-            reasons.append("position_maintained_above_ema9")
+
+            # Classic management: keep the original setup stop. A strict UP-to-DOWN
+            # turn on a candle crossing EMA 9 arms an exit below that candle low.
+            if account.exit_trigger_price is not None:
+                if current_slope > epsilon:
+                    self._clear_classic_exit_trigger(account)
+                    account.setup_status = "IN_POSITION"
+                    account.last_setup_event = "CLASSIC_EXIT_CANCELLED"
+                    account.last_setup_event_reason = (
+                        "EMA 9 turned up again before the classical exit trigger was broken."
+                    )
+                    reasons.append("classic_exit_trigger_cancelled_ema9_turned_up")
+                else:
+                    account.setup_status = "EXIT_ARMED"
+                    reasons.append(
+                        f"classic_exit_waiting_below={account.exit_trigger_price:.8f}"
+                    )
+                    return StrategyDecision(
+                        "EXIT_ARMED",
+                        "NOT_USED",
+                        "HOLD",
+                        1,
+                        "; ".join(reasons),
+                        execution_reference_price=account.exit_trigger_price,
+                        setup_status="EXIT_ARMED",
+                    )
+
+            bearish_reversal = previous_slope > epsilon and current_slope < -epsilon
+            if bearish_reversal and candle_crossed_ema9:
+                tick_rate = self.settings.ema9_entry_tick_rate if self.settings is not None else 0.0
+                exit_trigger = max(low * (1 - tick_rate), 0.0)
+                account.exit_trigger_price = exit_trigger
+                account.exit_trigger_candle_timestamp = now
+                account.exit_trigger_candle_low = low
+                account.setup_status = "EXIT_ARMED"
+                account.last_setup_event = "CLASSIC_EXIT_ARMED"
+                account.last_setup_event_reason = (
+                    "EMA 9 turned down. Waiting for price to break the reversal candle low."
+                )
+                reasons.extend(
+                    [
+                        "classic_up_to_down_reversal_detected",
+                        f"classic_exit_trigger={exit_trigger:.8f}",
+                    ]
+                )
+                return StrategyDecision(
+                    "EXIT_ARMED",
+                    "NOT_USED",
+                    "HOLD",
+                    1,
+                    "; ".join(reasons),
+                    execution_reference_price=exit_trigger,
+                    setup_status="EXIT_ARMED",
+                )
+
+            reasons.append("classic_position_maintained_with_setup_stop")
             return StrategyDecision(
                 "HOLD",
                 "NOT_USED",
@@ -418,15 +556,22 @@ class Ema9Setup91Strategy:
                 1,
                 "; ".join(reasons),
                 setup_status="IN_POSITION",
+                stop_loss_override=account.stop_loss_price,
             )
 
+        # No open position: clear any exit state left by an older version.
+        self._clear_classic_exit_trigger(account)
+
         if account.setup_status == "ARMED":
-            if current_slope < -epsilon:
+            # A pending 9.1 entry is valid only while EMA 9 is still clearly rising.
+            if current_slope <= epsilon:
                 account.setup_status = "CANCELLED"
-                account.setup_cancel_reason = "EMA 9 turned down before the entry trigger."
+                account.setup_cancel_reason = (
+                    "EMA 9 stopped rising before the entry trigger was reached."
+                )
                 account.last_setup_event = "SETUP_CANCELLED"
                 account.last_setup_event_reason = account.setup_cancel_reason
-                reasons.append("armed_setup_cancelled_ema9_turned_down")
+                reasons.append("armed_setup_cancelled_ema9_not_rising")
                 return StrategyDecision(
                     "CANCELLED",
                     "NOT_USED",
@@ -447,15 +592,22 @@ class Ema9Setup91Strategy:
                 stop_loss_override=account.initial_setup_stop_price,
             )
 
-        reversal_detected = previous_slope <= epsilon and current_slope > epsilon
+        strict_reversal = previous_slope < -epsilon and current_slope > epsilon
+        reversal_detected = strict_reversal and candle_crossed_ema9
         if not reversal_detected:
-            if account.setup_status not in {"CANCELLED", "MISSED_ENTRY"}:
+            if account.setup_status not in {"CANCELLED", "MISSED_ENTRY", "REJECTED"}:
                 account.setup_status = "IDLE"
             account.last_setup_event = "WAITING_FOR_REVERSAL"
-            account.last_setup_event_reason = (
-                "EMA 9 has not completed a new down-to-up turn on closed candles."
-            )
-            reasons.append("no_down_to_up_ema9_reversal")
+            if strict_reversal and not candle_crossed_ema9:
+                account.last_setup_event_reason = (
+                    "EMA 9 turned up, but the reversal candle did not cross the average."
+                )
+                reasons.append("strict_reversal_without_ema9_cross")
+            else:
+                account.last_setup_event_reason = (
+                    "EMA 9 has not completed a strict down-to-up turn on closed candles."
+                )
+                reasons.append("no_strict_down_to_up_ema9_reversal")
             return StrategyDecision(
                 "HOLD",
                 "NOT_USED",
@@ -465,8 +617,8 @@ class Ema9Setup91Strategy:
                 setup_status=account.setup_status,
             )
 
-        setup_high = float(current_row["high"])
-        setup_low = float(current_row["low"])
+        setup_high = high
+        setup_low = low
         tick_rate = self.settings.ema9_entry_tick_rate if self.settings is not None else 0.0
         trigger = setup_high * (1 + tick_rate)
         stop = max(setup_low, 0.0)
@@ -474,7 +626,8 @@ class Ema9Setup91Strategy:
 
         reasons.extend(
             [
-                "ema9_down_to_up_reversal_detected",
+                "strict_ema9_down_to_up_reversal_detected",
+                "setup_candle_crossed_ema9=true",
                 f"entry_trigger={trigger:.8f}",
                 f"initial_stop={stop:.8f}",
                 f"risk_pct={(risk / trigger if trigger > 0 else 0.0):.6f}",
@@ -506,7 +659,8 @@ class Ema9Setup91Strategy:
         account.setup_cancel_reason = None
         account.last_setup_event = "SETUP_ARMED"
         account.last_setup_event_reason = (
-            "EMA 9 turned upward. Waiting for price to break the setup candle high."
+            "EMA 9 turned strictly upward on a candle crossing the average. "
+            "Waiting for price to break that candle high."
         )
         reasons.append("setup_armed_waiting_for_breakout")
         return StrategyDecision(

@@ -12,7 +12,11 @@ from .models import (
     StrategyEquitySnapshot,
     StrategySimulatedTrade,
 )
-from .strategy_codes import CURRENT_HYBRID, EMA_CROSSOVER, LARRY_WILLIAMS_91
+from .strategy_codes import (
+    CURRENT_HYBRID,
+    EMA_CROSSOVER,
+    EMA9_STRATEGY_CODES,
+)
 from .trading_profiles import TradingProfile
 
 
@@ -173,8 +177,11 @@ class MultiStrategyPaperBroker:
         account.total_fees += fee
         account.total_spread_cost += spread_cost
         account.total_slippage_cost += slippage_cost
-        if account.strategy_code == LARRY_WILLIAMS_91:
+        if account.strategy_code in EMA9_STRATEGY_CODES:
             account.setup_status = "IN_POSITION"
+            account.exit_trigger_price = None
+            account.exit_trigger_candle_timestamp = None
+            account.exit_trigger_candle_low = None
             account.last_setup_event = "BREAKOUT_ENTRY"
             account.last_setup_event_reason = reason
 
@@ -298,7 +305,7 @@ class MultiStrategyPaperBroker:
         account.stop_loss_price = None
         account.take_profit_price = None
         account.trailing_stop_price = None
-        if account.strategy_code == LARRY_WILLIAMS_91:
+        if account.strategy_code in EMA9_STRATEGY_CODES:
             account.setup_status = "IDLE"
             account.setup_candle_timestamp = None
             account.setup_candle_high = None
@@ -307,6 +314,9 @@ class MultiStrategyPaperBroker:
             account.initial_setup_stop_price = None
             account.setup_target_price = None
             account.setup_cancel_reason = None
+            account.exit_trigger_price = None
+            account.exit_trigger_candle_timestamp = None
+            account.exit_trigger_candle_low = None
             account.last_setup_event = "POSITION_CLOSED"
             account.last_setup_event_reason = reason
 
