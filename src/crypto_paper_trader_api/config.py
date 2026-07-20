@@ -143,7 +143,6 @@ class Settings(BaseSettings):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    @property
     def validate_persistent_storage(self) -> None:
         """Fail fast on Railway when no persistent volume is attached.
 
