@@ -133,3 +133,30 @@ http://localhost:5173
 - Frontend variable: `VITE_API_URL=https://your-backend-domain`
 
 The SQLite database is the only persistent experiment data source. CSV/JSON and ZIP content is built in memory only when a download is requested.
+
+## Manual stop/consolidation security
+
+The public dashboard does not expose the manual **Stop and consolidate** action.
+The API endpoint remains available only to direct administrative clients:
+
+```text
+POST /api/v1/experiments/{experiment_id}/stop
+```
+
+Configure the secret on the Railway **API service**:
+
+```env
+ADMIN_API_KEY=replace-with-a-long-random-secret
+```
+
+Send the same value in the request header:
+
+```bash
+curl -X POST \
+  "https://cryptopapertraderapi-production.up.railway.app/api/v1/experiments/EXPERIMENT_ID/stop" \
+  -H "X-Admin-Key: YOUR_ADMIN_API_KEY"
+```
+
+Do not create `VITE_ADMIN_API_KEY` and do not place the key in frontend source code.
+When `ADMIN_API_KEY` is absent, the endpoint fails closed with HTTP 503. A missing or
+incorrect request key returns HTTP 401.

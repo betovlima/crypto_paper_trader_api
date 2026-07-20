@@ -20,6 +20,7 @@ from .models import (
     StrategySimulatedTrade,
 )
 from .schemas import ExperimentCreate, ExperimentResponse, HealthResponse, PublicConfiguration
+from .security import require_admin_key
 from .strategy_codes import (
     ACTIVE_STRATEGY_CODES,
     CURRENT_HYBRID,
@@ -53,7 +54,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.8.2",
+    version="0.9.1",
     description=(
         "PAPER_ONLY crypto strategy comparison using public CoinEx Spot data. "
         "Technical setups decide entries and exits; fees are applied only to execution "
@@ -191,6 +192,7 @@ def get_experiment(
     "/api/v1/experiments/{experiment_id}/stop",
     response_model=ExperimentResponse,
     tags=["Experiments"],
+    dependencies=[Depends(require_admin_key)],
 )
 def request_stop(experiment_id: str, session: Session = Depends(get_session)) -> ExperimentResponse:
     experiment = _get_experiment_or_404(session, experiment_id)
