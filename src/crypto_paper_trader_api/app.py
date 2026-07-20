@@ -19,7 +19,14 @@ from .models import (
     StrategyMarketSnapshot,
     StrategySimulatedTrade,
 )
-from .schemas import ExperimentCreate, ExperimentResponse, HealthResponse, PublicConfiguration
+from .schemas import (
+    ExperimentCreate,
+    ExperimentResponse,
+    HealthResponse,
+    PublicConfiguration,
+    StrategyComparisonHistoryResponse,
+    StrategyComparisonResponse,
+)
 from .security import require_admin_key
 from .strategy_codes import (
     ACTIVE_STRATEGY_CODES,
@@ -61,7 +68,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.9.4",
+    version="0.9.5",
     description=(
         "PAPER_ONLY crypto strategy comparison using public CoinEx Spot data. "
         "Technical setups decide entries and exits; fees are applied only to execution "
@@ -240,6 +247,95 @@ def list_strategy_accounts(
         )
     )
     return [_strategy_summary(session, account, experiment.last_price) for account in accounts]
+
+
+@app.get(
+    "/api/v1/experiments/{experiment_id}/strategy-comparison",
+    response_model=StrategyComparisonResponse,
+    tags=["Strategy Comparison"],
+)
+def get_strategy_comparison(
+    experiment_id: str,
+    session: Session = Depends(get_session),
+) -> StrategyComparisonResponse:
+    """Return only the latest persisted decision for each active strategy.
+
+    This query endpoint never runs indicators, trains models, executes trades, or
+    changes experiment state. The worker remains solely responsible for analysis.
+    """
+    experiment = _get_experiment_or_404(session, experiment_id)
+    strategies = []
+    latest_timestamps = []
+    for strategy_code in ACTIVE_STRATEGY_CODES:
+        latest = session.scalar(
+            select(StrategyDecisionSnapshot)
+            .where(
+                StrategyDecisionSnapshot.experiment_id == experiment_id,
+                StrategyDecisionSnapshot.strategy_code == strategy_code,
+            )
+            .order_by(StrategyDecisionSnapshot.candle_timestamp.desc())
+            .limit(1)
+        )
+        if latest is not None:
+            latest_timestamps.append(latest.candle_timestamp)
+        strategies.append(
+            {
+                "strategy_code": strategy_code,
+                "display_name": STRATEGY_DISPLAY_NAMES[strategy_code],
+                "description": STRATEGY_DESCRIPTIONS[strategy_code],
+                "latest_decision": latest.to_dict() if latest is not None else None,
+            }
+        )
+    return StrategyComparisonResponse(
+        experiment_id=experiment.id,
+        market=experiment.market,
+        updated_at=max(latest_timestamps) if latest_timestamps else None,
+        strategies=strategies,
+    )
+
+
+@app.get(
+    "/api/v1/experiments/{experiment_id}/strategy-comparison/history",
+    response_model=StrategyComparisonHistoryResponse,
+    tags=["Strategy Comparison"],
+)
+def get_strategy_comparison_history(
+    experiment_id: str,
+    limit: int = Query(default=4, ge=1, le=50),
+    session: Session = Depends(get_session),
+) -> StrategyComparisonHistoryResponse:
+    """Return recent persisted decisions grouped by strategy.
+
+    History is intentionally separate from the current-state endpoint so each
+    route has one read-only responsibility and response sizes stay predictable.
+    """
+    experiment = _get_experiment_or_404(session, experiment_id)
+    strategies = []
+    for strategy_code in ACTIVE_STRATEGY_CODES:
+        rows = list(
+            session.scalars(
+                select(StrategyDecisionSnapshot)
+                .where(
+                    StrategyDecisionSnapshot.experiment_id == experiment_id,
+                    StrategyDecisionSnapshot.strategy_code == strategy_code,
+                )
+                .order_by(StrategyDecisionSnapshot.candle_timestamp.desc())
+                .limit(limit)
+            )
+        )
+        strategies.append(
+            {
+                "strategy_code": strategy_code,
+                "display_name": STRATEGY_DISPLAY_NAMES[strategy_code],
+                "decisions": [row.to_dict() for row in rows],
+            }
+        )
+    return StrategyComparisonHistoryResponse(
+        experiment_id=experiment.id,
+        market=experiment.market,
+        limit_per_strategy=limit,
+        strategies=strategies,
+    )
 
 
 @app.get("/api/v1/experiments/{experiment_id}/strategy-decisions", tags=["Strategy Comparison"])

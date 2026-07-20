@@ -175,3 +175,12 @@ incorrect request key returns HTTP 401.
   closed candle. This baseline is action-blocked and cannot create a historical paper trade.
 - Existing `RUNNING` experiments continue after deploys when the SQLite file is stored on the
   attached volume.
+
+## Strategy comparison read endpoints
+
+The comparison dashboard uses two read-only endpoints with separate responsibilities:
+
+- `GET /api/v1/experiments/{experiment_id}/strategy-comparison` returns only the latest persisted decision for each active strategy.
+- `GET /api/v1/experiments/{experiment_id}/strategy-comparison/history?limit=4` returns recent persisted decisions grouped by strategy.
+
+Neither endpoint calculates indicators, trains the model, executes trades, or modifies experiment state. Those responsibilities remain in the worker.
