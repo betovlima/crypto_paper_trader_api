@@ -109,7 +109,22 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        """Return normalized browser origins accepted by CORS.
+
+        Browser Origin headers never contain a trailing slash. Railway variables are
+        often pasted from the public URL with a trailing slash, so normalize both
+        comma-separated and JSON-like values before configuring CORSMiddleware.
+        """
+        raw_value = self.cors_origins.strip()
+        if raw_value.startswith("[") and raw_value.endswith("]"):
+            raw_value = raw_value[1:-1]
+
+        origins: list[str] = []
+        for item in raw_value.split(","):
+            origin = item.strip().strip('"').strip("'").rstrip("/")
+            if origin and origin not in origins:
+                origins.append(origin)
+        return origins
 
     @property
     def effective_default_taker_fee_rate(self) -> float:
