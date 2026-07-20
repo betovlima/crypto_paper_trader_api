@@ -121,7 +121,11 @@ class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     mode: Literal["PAPER_ONLY"] = "PAPER_ONLY"
     database: str
+    data_dir: str
+    database_exists: bool
     worker_running: bool
+    persistent_storage_configured: bool
+    storage_warning: str | None = None
 
 
 class PublicConfiguration(BaseModel):
