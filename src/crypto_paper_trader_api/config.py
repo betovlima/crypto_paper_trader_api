@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     data_dir: Path = Path("./data")
+    reports_dir: Path | None = None
     database_url: str | None = None
 
     coinex_base_url: str = "https://api.coinex.com/v2"
@@ -68,6 +69,7 @@ class Settings(BaseSettings):
     cooldown_minutes: int = Field(default=60, ge=0, le=1440)
 
     cors_origins: str = "http://localhost:5173"
+    admin_api_key: str | None = None
 
     # EMA9 Setup 9.1 comparison settings.
     ema9_period: int = Field(default=9, ge=2, le=100)
@@ -97,6 +99,12 @@ class Settings(BaseSettings):
     @property
     def resolved_data_dir(self) -> Path:
         path = self.data_dir.expanduser().resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def resolved_reports_dir(self) -> Path:
+        path = (self.reports_dir or (self.resolved_data_dir / "reports")).expanduser().resolve()
         path.mkdir(parents=True, exist_ok=True)
         return path
 
