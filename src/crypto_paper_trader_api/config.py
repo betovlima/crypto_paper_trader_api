@@ -144,9 +144,29 @@ class Settings(BaseSettings):
         return path
 
     @property
+    def validate_persistent_storage(self) -> None:
+        """Fail fast on Railway when no persistent volume is attached.
+
+        Starting with an ephemeral SQLite database would make an experiment appear to
+        disappear after every deployment. It is safer to refuse startup than to run
+        silently without durable state.
+        """
+        if os.getenv("RAILWAY_ENVIRONMENT") and not self.persistent_storage_configured:
+            raise RuntimeError(
+                "A Railway persistent volume is required for the API service. "
+                "Attach a volume at /data before starting the application."
+            )
+
+    @property
     def resolved_database_url(self) -> str:
+        railway_mount = self.railway_volume_mount_path
+        if railway_mount is not None:
+            database_path = self.resolved_data_dir / "crypto_paper_trader_api.db"
+            return f"sqlite:///{database_path.as_posix()}"
+
         if self.database_url:
             return self.database_url
+
         database_path = self.resolved_data_dir / "crypto_paper_trader_api.db"
         return f"sqlite:///{database_path.as_posix()}"
 
