@@ -11,7 +11,10 @@ from sqlalchemy.orm import Session
 from crypto_paper_trader_api.config import Settings
 from crypto_paper_trader_api.database import Base
 from crypto_paper_trader_api.execution_costs import ExecutionCosts
-from crypto_paper_trader_api.models import StrategyDecisionSnapshot
+from crypto_paper_trader_api.models import (
+    StrategyDecisionSnapshot,
+    StrategySimulatedTrade,
+)
 from crypto_paper_trader_api.worker import (
     TraderWorker,
     create_experiment_record,
@@ -123,3 +126,32 @@ def test_downtime_recovery_replays_every_missing_closed_candle() -> None:
         assert experiment.last_processed_candle_at == execution_frame.iloc[-1][
             "timestamp"
         ].to_pydatetime()
+
+
+def test_initial_dashboard_snapshot_is_created_without_historical_trade() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    settings = Settings(default_execution_timeframe="30min")
+    worker = TraderWorker(settings)
+    worker.client = FakeClient()  # type: ignore[assignment]
+    experiment = create_experiment_record("BTCUSDT", "30min", "1hour", 24, 1000, settings)
+    experiment.last_price = 106
+    experiment.best_bid = 105.99
+    experiment.best_ask = 106.01
+
+    with Session(engine) as session:
+        session.add(experiment)
+        session.flush()
+        ensure_strategy_accounts(session, experiment)
+        asyncio.run(run_analysis(session, experiment, worker))
+        session.flush()
+
+        decisions = list(session.scalars(select(StrategyDecisionSnapshot)))
+        trades = list(session.scalars(select(StrategySimulatedTrade)))
+
+        assert len(decisions) == 3
+        assert trades == []
+        assert all(not item.action_executed for item in decisions)
+        assert experiment.last_processed_candle_at is not None
+        assert experiment.recovery_message is not None
+        assert "Initial dashboard state" in experiment.recovery_message

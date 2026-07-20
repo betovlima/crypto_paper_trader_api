@@ -265,9 +265,7 @@ class TraderWorker:
                 account.last_event = "LIVE_ENTRY_TRIGGER"
                 account.last_status_message = events[account.strategy_code][1]
 
-        analysis_due = experiment.next_analysis_at is None or now >= self._as_utc(
-            experiment.next_analysis_at
-        )
+        analysis_due = self._analysis_is_due(experiment=experiment, now=now)
         if analysis_due:
             processed, analysis_events = await self._run_candle_analysis(
                 session=session,
@@ -376,17 +374,39 @@ class TraderWorker:
         if not valid_indices:
             raise ValueError("Not enough complete candles for strategy analysis.")
 
-        pending_indices = [
-            index
-            for index in valid_indices
-            if index >= 2
-            and self._is_pending_candle(
-                candle_timestamp=self._to_datetime(
-                    execution_indicators.iloc[index]["timestamp"]
-                ),
-                experiment=experiment,
-            )
-        ]
+        initial_dashboard_snapshot = False
+        if experiment.last_processed_candle_at is None:
+            post_start_indices = [
+                index
+                for index in valid_indices
+                if index >= 2
+                and (
+                    self._to_datetime(execution_indicators.iloc[index]["timestamp"])
+                    + timedelta(seconds=TIMEFRAME_SECONDS[experiment.execution_timeframe])
+                )
+                > self._as_utc(experiment.started_at)
+            ]
+            if post_start_indices:
+                pending_indices = post_start_indices
+            else:
+                # Populate the technical/model dashboard immediately from the latest
+                # already-closed candle. Every account is action-blocked below, so this
+                # baseline snapshot cannot create a historical paper trade.
+                pending_indices = [valid_indices[-1]]
+                initial_dashboard_snapshot = True
+        else:
+            pending_indices = [
+                index
+                for index in valid_indices
+                if index >= 2
+                and self._is_pending_candle(
+                    candle_timestamp=self._to_datetime(
+                        execution_indicators.iloc[index]["timestamp"]
+                    ),
+                    experiment=experiment,
+                )
+            ]
+
         if not pending_indices:
             experiment.next_analysis_at = self._next_boundary(now, experiment.execution_timeframe)
             return False, {}
@@ -402,6 +422,11 @@ class TraderWorker:
 
         events: dict[str, tuple[str, str]] = {}
         recovered_trades_before = experiment.recovered_trade_count
+        baseline_action_block = (
+            {account.id for account in self._strategy_accounts(session, experiment.id)}
+            if initial_dashboard_snapshot
+            else set()
+        )
         for current_index in pending_indices:
             # When more than one closed candle is pending, the worker was offline or delayed.
             # Every pending candle belongs to the historical replay, including the latest one.
@@ -413,7 +438,11 @@ class TraderWorker:
                 trend_indicators=trend_indicators,
                 current_index=current_index,
                 costs=costs,
-                live_action_accounts=live_action_accounts if not is_recovered else set(),
+                live_action_accounts=(
+                    baseline_action_block
+                    if initial_dashboard_snapshot
+                    else (live_action_accounts if not is_recovered else set())
+                ),
                 is_recovered=is_recovered,
             )
             events = candle_events
@@ -421,7 +450,13 @@ class TraderWorker:
                 experiment.recovered_candle_count += 1
                 experiment.recovered_trade_count += recovered_trade_count
 
-        if recovery_mode:
+        if initial_dashboard_snapshot:
+            experiment.recovery_status = "IDLE"
+            experiment.recovery_message = (
+                "Initial dashboard state generated from the latest closed candle; "
+                "no historical trade was executed."
+            )
+        elif recovery_mode:
             experiment.recovery_status = "COMPLETED"
             experiment.recovery_completed_at = datetime.now(timezone.utc)
             new_trades = experiment.recovered_trade_count - recovered_trades_before
@@ -1207,6 +1242,20 @@ class TraderWorker:
         experiment.consecutive_losses = hybrid.consecutive_losses
         experiment.cooldown_until = hybrid.cooldown_until
         experiment.final_capital = hybrid.final_capital
+
+    def _analysis_is_due(self, experiment: Experiment, now: datetime) -> bool:
+        """Return whether strategy analysis must run in the current worker cycle.
+
+        A persisted experiment without any processed candle always needs its initial
+        dashboard snapshot immediately. This takes precedence over a future
+        ``next_analysis_at`` value that may have been stored by an older deployment.
+        """
+
+        if experiment.last_processed_candle_at is None:
+            return True
+        if experiment.next_analysis_at is None:
+            return True
+        return self._as_utc(now) >= self._as_utc(experiment.next_analysis_at)
 
     def _is_pending_candle(
         self,

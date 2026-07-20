@@ -46,6 +46,13 @@ export_builder = ExportBuilder()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_database()
+    if settings.storage_warning:
+        logging.getLogger(__name__).warning(settings.storage_warning)
+    logging.getLogger(__name__).info(
+        "SQLite database path: %s; Railway persistent volume attached: %s",
+        settings.resolved_database_url,
+        settings.persistent_storage_configured,
+    )
     worker.start()
     worker.wake()
     yield
@@ -54,7 +61,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.9.2",
+    version="0.9.4",
     description=(
         "PAPER_ONLY crypto strategy comparison using public CoinEx Spot data. "
         "Technical setups decide entries and exits; fees are applied only to execution "
@@ -74,9 +81,15 @@ app.add_middleware(
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 def health() -> HealthResponse:
+    database_url = settings.resolved_database_url
+    database_path = settings.resolved_data_dir / "crypto_paper_trader_api.db"
     return HealthResponse(
-        database=settings.resolved_database_url,
+        database=database_url,
+        data_dir=str(settings.resolved_data_dir),
+        database_exists=database_path.exists(),
         worker_running=worker.is_running,
+        persistent_storage_configured=settings.persistent_storage_configured,
+        storage_warning=settings.storage_warning,
     )
 
 

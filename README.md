@@ -126,13 +126,20 @@ http://localhost:5173
 
 ## Railway
 
-- Backend root directory: `/crypto_paper_trader_api`
-- Backend volume mount: `/data`
-- Frontend root directory: `/frontend`
-- Backend variable: `DATA_DIR=/data`
-- Frontend variable: `VITE_API_URL=https://your-backend-domain`
+- Attach one persistent volume to the **API service**, preferably mounted at `/data`.
+- Railway injects `RAILWAY_VOLUME_MOUNT_PATH`; the API now uses that path automatically.
+- Set `APP_ENV=production`.
+- `DATA_DIR=/data` remains supported, but is no longer required when the volume is attached.
+- Frontend variable: `VITE_API_URL=https://your-backend-domain`.
 
-The SQLite database is the only persistent experiment data source. CSV/JSON and ZIP content is built in memory only when a download is requested.
+Do not set a relative `DATABASE_URL` in Railway. Either remove `DATABASE_URL` and let the
+application use the mounted volume, or use the absolute SQLite URL
+`sqlite:////data/crypto_paper_trader_api.db`.
+
+The `/health` endpoint reports the resolved database path, whether the database file exists,
+and whether Railway exposed an attached volume. The SQLite database is the only persistent
+experiment data source. CSV/JSON and ZIP content is built in memory only when a download is
+requested.
 
 ## Manual stop/consolidation security
 
@@ -160,11 +167,11 @@ curl -X POST \
 Do not create `VITE_ADMIN_API_KEY` and do not place the key in frontend source code.
 When `ADMIN_API_KEY` is absent, the endpoint fails closed with HTTP 503. A missing or
 incorrect request key returns HTTP 401.
-## v0.9.2 decision-state correction
+## v0.9.3 persistence and initial-dashboard correction
 
-For a newly started experiment, the first eligible decision candle may begin before the
-experiment start and close after it. The worker now compares the candle close with the
-experiment start for the first analysis. This prevents the dashboard from waiting one extra
-full timeframe before showing the Hybrid/ML, EMA and RSI/ADX decision state. Recovery after
-a previously processed candle continues to compare candle opening timestamps, preventing
-duplicate decisions.
+- The API automatically prefers `RAILWAY_VOLUME_MOUNT_PATH` for SQLite and reports a clear
+  warning when Railway is running without a persistent volume.
+- A new experiment immediately receives a technical/model baseline from the latest already
+  closed candle. This baseline is action-blocked and cannot create a historical paper trade.
+- Existing `RUNNING` experiments continue after deploys when the SQLite file is stored on the
+  attached volume.

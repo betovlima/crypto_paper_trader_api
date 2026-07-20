@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import os
 from pathlib import Path
 
 from pydantic import Field, field_validator
@@ -97,10 +98,44 @@ class Settings(BaseSettings):
         return value
 
     @property
+    def railway_volume_mount_path(self) -> Path | None:
+        """Return the Railway volume mount path injected at runtime, when present."""
+        raw_path = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+        return Path(raw_path).expanduser() if raw_path else None
+
+    @property
     def resolved_data_dir(self) -> Path:
-        path = self.data_dir.expanduser().resolve()
+        """Resolve the runtime data directory, preferring an attached Railway volume.
+
+        Railway automatically exposes ``RAILWAY_VOLUME_MOUNT_PATH`` when a volume is
+        attached. Preferring that value prevents an accidental fallback to the ephemeral
+        application filesystem after a deployment.
+        """
+        railway_mount = self.railway_volume_mount_path
+        if railway_mount is not None:
+            path = railway_mount
+        elif self.app_env.strip().lower() == "production" and self.data_dir == Path("./data"):
+            path = Path("/data")
+        else:
+            path = self.data_dir
+
+        path = path.expanduser().resolve()
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @property
+    def persistent_storage_configured(self) -> bool:
+        """Whether Railway reports an attached persistent volume."""
+        return self.railway_volume_mount_path is not None
+
+    @property
+    def storage_warning(self) -> str | None:
+        if os.getenv("RAILWAY_ENVIRONMENT") and not self.persistent_storage_configured:
+            return (
+                "No Railway volume is attached. SQLite data will be lost on every deploy. "
+                "Attach a volume to the API service, preferably at /data."
+            )
+        return None
 
     @property
     def resolved_reports_dir(self) -> Path:
