@@ -30,6 +30,7 @@ from .schemas import (
 from .security import require_admin_key
 from .strategy_codes import (
     ACTIVE_STRATEGY_CODES,
+    AI_PATTERN_TRADER,
     CURRENT_HYBRID,
     STRATEGY_DESCRIPTIONS,
     STRATEGY_DISPLAY_NAMES,
@@ -69,12 +70,13 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.9.9",
+    version="0.11.0",
     description=(
         "PAPER_ONLY crypto strategy comparison using public CoinEx Spot data. "
         "Technical setups decide entries and exits; fees are applied only to execution "
-        "accounting and result reporting. The application contains no authenticated order "
-        "or withdrawal endpoints."
+        "accounting and result reporting. AI Pattern Trader learns recurring OHLCV patterns "
+        "directly and operates only an independent simulated portfolio. The application contains "
+        "no authenticated order or withdrawal endpoints."
     ),
     lifespan=lifespan,
 )
@@ -143,6 +145,14 @@ def public_configuration() -> PublicConfiguration:
         max_holding_hours=settings.max_holding_hours,
         max_daily_loss_pct=settings.max_daily_loss_pct,
         ema9_period=settings.ema9_period,
+        ai_pattern_mode=settings.ai_pattern_mode,
+        ai_pattern_horizon_candles=settings.ai_pattern_horizon_candles,
+        ai_pattern_buy_probability_threshold=settings.ai_pattern_buy_probability_threshold,
+        ai_pattern_sell_probability_threshold=settings.ai_pattern_sell_probability_threshold,
+        ai_pattern_min_expected_net_return=settings.ai_pattern_min_expected_net_return,
+        ai_pattern_min_confidence=settings.ai_pattern_min_confidence,
+        ai_pattern_max_spread_rate=settings.ai_pattern_max_spread_rate,
+        ai_pattern_model_version="AI-PATTERN-v1",
     )
 
 
@@ -337,6 +347,74 @@ def get_strategy_comparison_history(
         limit_per_strategy=limit,
         strategies=strategies,
     )
+
+
+@app.get(
+    "/api/v1/experiments/{experiment_id}/ai-pattern-trader",
+    tags=["AI Pattern Trader"],
+)
+def get_ai_pattern_trader(
+    experiment_id: str,
+    limit: int = Query(default=20, ge=1, le=200),
+    session: Session = Depends(get_session),
+):
+    """Return the autonomous pattern model's persisted state and delayed rewards."""
+
+    experiment = _get_experiment_or_404(session, experiment_id)
+    ensure_strategy_accounts(session, experiment)
+    session.commit()
+    account = session.scalar(
+        select(StrategyAccount).where(
+            StrategyAccount.experiment_id == experiment_id,
+            StrategyAccount.strategy_code == AI_PATTERN_TRADER,
+        )
+    )
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="AI Pattern Trader account not found."
+        )
+
+    decisions = list(
+        session.scalars(
+            select(StrategyDecisionSnapshot)
+            .where(
+                StrategyDecisionSnapshot.experiment_id == experiment_id,
+                StrategyDecisionSnapshot.strategy_code == AI_PATTERN_TRADER,
+            )
+            .order_by(StrategyDecisionSnapshot.candle_timestamp.desc())
+            .limit(limit)
+        )
+    )
+    resolved = [row for row in decisions if row.ai_outcome_resolved]
+    correct = [row for row in resolved if row.ai_direction_correct is not None]
+    return {
+        "experiment_id": experiment.id,
+        "market": experiment.market,
+        "mode": settings.ai_pattern_mode,
+        "model_version": "AI-PATTERN-v1",
+        "account": _strategy_summary(session, account, experiment.last_price),
+        "latest_decision": decisions[0].to_dict() if decisions else None,
+        "recent_predictions": [row.to_dict() for row in decisions],
+        "performance": {
+            "prediction_count": len(decisions),
+            "resolved_count": len(resolved),
+            "direction_accuracy": (
+                sum(1 for row in correct if row.ai_direction_correct) / len(correct)
+                if correct
+                else None
+            ),
+            "average_realized_net_return": (
+                sum(float(row.ai_realized_net_return or 0.0) for row in resolved) / len(resolved)
+                if resolved
+                else None
+            ),
+            "average_reward": (
+                sum(float(row.ai_realized_reward or 0.0) for row in resolved) / len(resolved)
+                if resolved
+                else None
+            ),
+        },
+    }
 
 
 @app.get("/api/v1/experiments/{experiment_id}/strategy-decisions", tags=["Strategy Comparison"])

@@ -13,6 +13,7 @@ from .models import (
     StrategySimulatedTrade,
 )
 from .strategy_codes import (
+    AI_PATTERN_TRADER,
     CURRENT_HYBRID,
     EMA_CROSSOVER,
     EMA9_STRATEGY_CODES,
@@ -42,7 +43,7 @@ class MultiStrategyPaperBroker:
         del costs  # Costs are accounting-only and must not alter technical risk levels.
         if not account.has_open_position:
             return
-        if account.strategy_code not in {CURRENT_HYBRID, EMA_CROSSOVER}:
+        if account.strategy_code not in {CURRENT_HYBRID, EMA_CROSSOVER, AI_PATTERN_TRADER}:
             return
 
         entry = float(account.entry_execution_price or account.average_entry_price or 0.0)
@@ -140,7 +141,7 @@ class MultiStrategyPaperBroker:
 
         if take_profit_override is not None:
             take_profit_price = float(take_profit_override)
-        elif account.strategy_code in {CURRENT_HYBRID, EMA_CROSSOVER}:
+        elif account.strategy_code in {CURRENT_HYBRID, EMA_CROSSOVER, AI_PATTERN_TRADER}:
             reward_risk_ratio = (
                 active_profile.reward_risk_ratio
                 if active_profile

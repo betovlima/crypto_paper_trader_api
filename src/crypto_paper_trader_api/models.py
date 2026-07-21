@@ -459,6 +459,22 @@ class StrategyAccount(Base):
     )
     exit_trigger_candle_low: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Autonomous AI Pattern Trader diagnostics. These columns are nullable so existing
+    # strategy accounts remain fully compatible after an additive migration.
+    ai_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai_regime: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai_pattern_cluster: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_upward_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_expected_net_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_similar_patterns: Mapped[int] = mapped_column(Integer, default=0)
+    ai_model_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ai_risk_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai_risk_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_last_prediction_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     @property
     def has_open_position(self) -> bool:
         return float(self.asset_quantity or 0.0) > 0
@@ -540,6 +556,17 @@ class StrategyAccount(Base):
             "exit_trigger_price": self.exit_trigger_price,
             "exit_trigger_candle_timestamp": self.exit_trigger_candle_timestamp,
             "exit_trigger_candle_low": self.exit_trigger_candle_low,
+            "ai_mode": self.ai_mode,
+            "ai_regime": self.ai_regime,
+            "ai_pattern_cluster": self.ai_pattern_cluster,
+            "ai_confidence": self.ai_confidence,
+            "ai_upward_probability": self.ai_upward_probability,
+            "ai_expected_net_return": self.ai_expected_net_return,
+            "ai_similar_patterns": self.ai_similar_patterns,
+            "ai_model_version": self.ai_model_version,
+            "ai_risk_status": self.ai_risk_status,
+            "ai_risk_reason": self.ai_risk_reason,
+            "ai_last_prediction_at": self.ai_last_prediction_at,
         }
 
 
@@ -627,6 +654,38 @@ class StrategyDecisionSnapshot(Base):
     stop_management_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
     active_stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     exit_trigger_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Autonomous AI Pattern Trader audit fields.
+    ai_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai_proposed_action: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    ai_regime: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai_pattern_cluster: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_neighbor_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_positive_neighbor_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_expected_gross_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_expected_net_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_worst_adverse_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_model_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ai_training_samples: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_validation_accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_validation_mae: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_risk_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ai_risk_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_horizon_candles: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ai_feature_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Delayed chronological reward evaluation. A prediction is resolved only after
+    # its configured future candle becomes available.
+    ai_outcome_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    ai_outcome_candle_timestamp: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ai_realized_gross_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_realized_net_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_realized_reward: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_realized_adverse_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ai_direction_correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     technical_signal: Mapped[str] = mapped_column(String(24))
     model_signal: Mapped[str] = mapped_column(String(24))

@@ -1,3 +1,13 @@
+# Release 0.11.0 — Autonomous AI Pattern Trader
+
+This release adds a fifth independent paper portfolio, `AI_PATTERN_TRADER`. It does not select among the handcrafted strategies. On every newly closed decision candle it learns directly from chronological OHLCV windows using an Extra Trees return ensemble, nearest-neighbour pattern memory, unsupervised clustering, deterministic regime detection and a separate risk governor.
+
+The model records its proposed action, risk-approved final signal, confidence, expected gross and net return, similar-pattern statistics, validation diagnostics and model version. After the configured horizon becomes available, the worker resolves each prediction with realized return, adverse excursion, reward and direction correctness without using future data at prediction time.
+
+The default mode is `PAPER_AUTONOMOUS`. Set `AI_PATTERN_MODE=OBSERVATION` to preserve all analysis and delayed evaluation while preventing this strategy from creating simulated trades. It remains paper-only in both modes and has no authenticated exchange-order capability.
+
+Existing experiments automatically receive an independent AI Pattern Trader account after deployment. Its history begins with the first analyses processed after the upgrade; no fictitious retroactive prediction history is generated. SQLite migrations are additive and use the existing persistent Railway volume.
+
 # Release 0.9.9 — Larry Williams Classic vs Trend Follower
 
 This release runs two independent Setup 9.1 paper portfolios:
@@ -21,7 +31,7 @@ Paper broker    -> bid/ask execution and simulated slippage
 Accounting      -> CoinEx fees, gross P&L and net P&L
 ```
 
-Exchange fees, spread and slippage never authorize or veto a technical signal and never move a technical stop. They are recorded after each simulated execution so the dashboard can compare the strategy's gross result with the realistic net result.
+Exchange fees, spread and slippage never authorize or veto the handcrafted strategies' technical signals and never move their technical stops. They are recorded after each simulated execution so the dashboard can compare gross and realistic net results. The independent AI Pattern Trader is different by design: its own learned policy estimates net edge and includes spread and cost limits in its deterministic risk governor.
 
 ## Trading profiles
 
@@ -63,9 +73,17 @@ Combines the selected profile's fast, slow and regime EMAs with RSI, ADX, relati
 
 Looks for a fresh crossover of the fast EMA above the slow EMA. The regime EMA, higher-timeframe direction, ADX, relative volume and RSI confirm the technical entry. A bearish crossover or close below the slow EMA can close the position.
 
-### Larry Williams 9.1
+### Larry Williams 9.1 Classic
 
-Detects a down-to-up turn in EMA 9 on closed candles. The reversal candle becomes the setup candle. The setup is armed until price breaks the setup candle high or EMA 9 turns down. The initial stop remains below the setup candle low. A closed candle below EMA 9 can close an open position.
+Detects a strict down-to-up turn in EMA 9 on a candle that crosses the average. Entry is above the reversal candle high and the initial stop is at its low. After entry, a bearish EMA 9 reversal candle arms the classical exit below that candle's low.
+
+### Larry Williams 9.1 Trend Follower
+
+Uses the same strict Setup 9.1 entry. After entry, the stop follows the low of each newly closed candle, never moves down, and the position can also close on a bearish EMA 9 reversal.
+
+### AI Pattern Trader
+
+Learns recurring structures directly from chronological OHLCV windows. It combines an Extra Trees return ensemble, nearest-neighbour pattern memory, unsupervised clusters, regime detection and deterministic risk limits. The strategy proposes BUY, HOLD or SELL independently and stores delayed future outcomes for chronological evaluation.
 
 ### Buy and Hold
 

@@ -16,6 +16,7 @@ LARRY_WILLIAMS_91_CLASSIC = EMA9_SETUP_91_COST_AWARE
 LARRY_WILLIAMS_91 = LARRY_WILLIAMS_91_CLASSIC
 LARRY_WILLIAMS_91_TREND_FOLLOWER = "EMA9_SETUP_91_TREND_FOLLOWER"
 
+AI_PATTERN_TRADER = "AI_PATTERN_TRADER"
 BUY_AND_HOLD = "BUY_AND_HOLD"
 
 ACTIVE_STRATEGY_CODES = (
@@ -23,6 +24,7 @@ ACTIVE_STRATEGY_CODES = (
     EMA_CROSSOVER,
     LARRY_WILLIAMS_91_CLASSIC,
     LARRY_WILLIAMS_91_TREND_FOLLOWER,
+    AI_PATTERN_TRADER,
 )
 
 STRATEGY_DISPLAY_NAMES = {
@@ -31,6 +33,7 @@ STRATEGY_DISPLAY_NAMES = {
     EMA9_SETUP_91: "Larry Williams 9.1 Classic",
     LARRY_WILLIAMS_91_CLASSIC: "Larry Williams 9.1 Classic",
     LARRY_WILLIAMS_91_TREND_FOLLOWER: "Larry Williams 9.1 Trend Follower",
+    AI_PATTERN_TRADER: "AI Pattern Trader",
     BUY_AND_HOLD: "Buy and Hold",
 }
 
@@ -54,6 +57,12 @@ STRATEGY_DESCRIPTIONS = {
         "stop follows the low of each newly closed candle, never moves down, and exits on the "
         "stop or a bearish EMA 9 reversal."
     ),
+    AI_PATTERN_TRADER: (
+        "Autonomous paper strategy that learns recurring OHLCV structures directly from "
+        "chronological candle windows. It combines an Extra Trees return model, nearest-neighbour "
+        "pattern memory, unsupervised clusters, regime detection and deterministic risk limits. "
+        "It does not choose among the other strategies."
+    ),
 }
 
 EMA9_STRATEGY_CODES = {
@@ -63,5 +72,5 @@ EMA9_STRATEGY_CODES = {
 }
 EMA9_CLASSIC_STRATEGY_CODES = {EMA9_SETUP_91, LARRY_WILLIAMS_91_CLASSIC}
 EMA9_TREND_FOLLOWER_STRATEGY_CODES = {LARRY_WILLIAMS_91_TREND_FOLLOWER}
-DIRECT_ENTRY_STRATEGY_CODES = {CURRENT_HYBRID, EMA_CROSSOVER}
-DYNAMIC_RISK_STRATEGY_CODES = {CURRENT_HYBRID, EMA_CROSSOVER}
+DIRECT_ENTRY_STRATEGY_CODES = {CURRENT_HYBRID, EMA_CROSSOVER, AI_PATTERN_TRADER}
+DYNAMIC_RISK_STRATEGY_CODES = {CURRENT_HYBRID, EMA_CROSSOVER, AI_PATTERN_TRADER}
