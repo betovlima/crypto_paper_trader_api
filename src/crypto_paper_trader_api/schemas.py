@@ -191,3 +191,11 @@ class PublicConfiguration(BaseModel):
     max_holding_hours: float
     max_daily_loss_pct: float
     ema9_period: int
+    ai_pattern_mode: str
+    ai_pattern_horizon_candles: int
+    ai_pattern_buy_probability_threshold: float
+    ai_pattern_sell_probability_threshold: float
+    ai_pattern_min_expected_net_return: float
+    ai_pattern_min_confidence: float
+    ai_pattern_max_spread_rate: float
+    ai_pattern_model_version: str = "AI-PATTERN-v1"

@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from .ai_pattern_trader import AIPatternTrader
 from .coinex_client import CoinExPublicClient, TIMEFRAME_SECONDS
 from .config import Settings, get_settings
 from .database import SessionLocal
@@ -32,6 +33,7 @@ from .multi_strategy import (
 )
 from .strategy_codes import (
     ACTIVE_STRATEGY_CODES,
+    AI_PATTERN_TRADER,
     CURRENT_HYBRID,
     DIRECT_ENTRY_STRATEGY_CODES,
     DYNAMIC_RISK_STRATEGY_CODES,
@@ -66,6 +68,7 @@ class TraderWorker:
         self.ema9_trend_strategy = Ema9Setup91Strategy(
             settings=settings, cost_aware=False, mode=Ema9Setup91Strategy.TREND_FOLLOWER
         )
+        self.ai_pattern_strategy = AIPatternTrader(settings)
         # Backward-compatible attribute used by older tests/integrations.
         self.ema9_strategy = self.ema9_classic_strategy
         self.broker = MultiStrategyPaperBroker(settings)
@@ -528,6 +531,12 @@ class TraderWorker:
         recovered_trade_count = 0
         recovered_action_accounts: set[int] = set()
         accounts = self._strategy_accounts(session, experiment.id)
+        self._resolve_ai_pattern_outcomes(
+            session=session,
+            experiment=experiment,
+            execution_indicators=execution_indicators,
+            current_index=current_index,
+        )
 
         # Replay intrabar stop/target and EMA9 breakout events using the missed candle OHLC.
         if is_recovered:
@@ -630,6 +639,16 @@ class TraderWorker:
                     trend_row=trend_row,
                     costs=costs,
                     profile=profile,
+                )
+            elif account.strategy_code == AI_PATTERN_TRADER:
+                decision = await asyncio.to_thread(
+                    self.ai_pattern_strategy.decide,
+                    account,
+                    model_frame,
+                    trend_row,
+                    costs,
+                    candle_end,
+                    profile,
                 )
             else:
                 ema9_strategy = (
@@ -750,6 +769,79 @@ class TraderWorker:
         experiment.last_processed_candle_at = candle_timestamp
         return events, recovered_trade_count
 
+    def _resolve_ai_pattern_outcomes(
+        self,
+        session: Session,
+        experiment: Experiment,
+        execution_indicators: pd.DataFrame,
+        current_index: int,
+    ) -> None:
+        """Resolve delayed AI rewards without using future data at prediction time."""
+
+        unresolved = list(
+            session.scalars(
+                select(StrategyDecisionSnapshot)
+                .where(
+                    StrategyDecisionSnapshot.experiment_id == experiment.id,
+                    StrategyDecisionSnapshot.strategy_code == AI_PATTERN_TRADER,
+                    StrategyDecisionSnapshot.ai_outcome_resolved.is_(False),
+                    StrategyDecisionSnapshot.ai_horizon_candles.is_not(None),
+                )
+                .order_by(StrategyDecisionSnapshot.candle_timestamp)
+            )
+        )
+        if not unresolved:
+            return
+
+        timestamp_to_index = {
+            self._to_datetime(row["timestamp"]): index
+            for index, row in execution_indicators.iloc[: current_index + 1].iterrows()
+        }
+        for snapshot in unresolved:
+            base_timestamp = self._as_utc(snapshot.candle_timestamp)
+            base_index = timestamp_to_index.get(base_timestamp)
+            if base_index is None:
+                continue
+            horizon = int(snapshot.ai_horizon_candles or self.settings.ai_pattern_horizon_candles)
+            target_index = base_index + horizon
+            if target_index > current_index:
+                continue
+
+            reference_price = float(snapshot.market_price)
+            if reference_price <= 0:
+                continue
+            target_row = execution_indicators.iloc[target_index]
+            path = execution_indicators.iloc[base_index + 1 : target_index + 1]
+            realized_gross_return = float(target_row["close"]) / reference_price - 1
+            realized_adverse_return = (
+                float(path["low"].min()) / reference_price - 1 if not path.empty else 0.0
+            )
+            realized_net_return = (
+                realized_gross_return - float(snapshot.estimated_round_trip_cost_rate or 0.0)
+            )
+            reward = realized_net_return - (
+                max(-realized_adverse_return, 0.0)
+                * self.settings.ai_pattern_reward_drawdown_penalty
+            )
+            proposed = str(snapshot.ai_proposed_action or "HOLD").upper()
+            if proposed == "BUY":
+                direction_correct = realized_net_return > 0
+            elif proposed == "SELL":
+                direction_correct = realized_gross_return < 0
+            else:
+                direction_correct = abs(realized_net_return) < max(
+                    self.settings.ai_pattern_min_expected_net_return,
+                    float(snapshot.estimated_round_trip_cost_rate or 0.0),
+                )
+
+            snapshot.ai_outcome_resolved = True
+            snapshot.ai_outcome_candle_timestamp = self._to_datetime(target_row["timestamp"])
+            snapshot.ai_realized_gross_return = realized_gross_return
+            snapshot.ai_realized_net_return = realized_net_return
+            snapshot.ai_realized_reward = reward
+            snapshot.ai_realized_adverse_return = realized_adverse_return
+            snapshot.ai_direction_correct = direction_correct
+
     @staticmethod
     def _historical_exit(
         account: StrategyAccount,
@@ -831,16 +923,33 @@ class TraderWorker:
             trend_rsi_14=float(trend_row["rsi_14"]),
             trend_adx_14=float(trend_row["adx_14"]),
             upward_probability=(
-                prediction.upward_probability if account.strategy_code == CURRENT_HYBRID else None
+                prediction.upward_probability
+                if account.strategy_code == CURRENT_HYBRID
+                else decision.ai_upward_probability
+                if account.strategy_code == AI_PATTERN_TRADER
+                else None
             ),
             downward_probability=(
-                prediction.downward_probability if account.strategy_code == CURRENT_HYBRID else None
+                prediction.downward_probability
+                if account.strategy_code == CURRENT_HYBRID
+                else (1 - decision.ai_upward_probability)
+                if account.strategy_code == AI_PATTERN_TRADER
+                and decision.ai_upward_probability is not None
+                else None
             ),
             expected_return=(
-                prediction.expected_return if account.strategy_code == CURRENT_HYBRID else None
+                prediction.expected_return
+                if account.strategy_code == CURRENT_HYBRID
+                else decision.ai_expected_net_return
+                if account.strategy_code == AI_PATTERN_TRADER
+                else None
             ),
             model_accuracy=(
-                prediction.accuracy if account.strategy_code == CURRENT_HYBRID else None
+                prediction.accuracy
+                if account.strategy_code == CURRENT_HYBRID
+                else decision.ai_validation_accuracy
+                if account.strategy_code == AI_PATTERN_TRADER
+                else None
             ),
             model_precision=(
                 prediction.precision if account.strategy_code == CURRENT_HYBRID else None
@@ -848,10 +957,18 @@ class TraderWorker:
             model_recall=(prediction.recall if account.strategy_code == CURRENT_HYBRID else None),
             model_roc_auc=(prediction.roc_auc if account.strategy_code == CURRENT_HYBRID else None),
             training_rows=(
-                prediction.training_rows if account.strategy_code == CURRENT_HYBRID else 0
+                prediction.training_rows
+                if account.strategy_code == CURRENT_HYBRID
+                else int(decision.ai_training_samples or 0)
+                if account.strategy_code == AI_PATTERN_TRADER
+                else 0
             ),
             model_top_features=(
-                prediction.top_features_json if account.strategy_code == CURRENT_HYBRID else "[]"
+                prediction.top_features_json
+                if account.strategy_code == CURRENT_HYBRID
+                else decision.ai_feature_summary or "{}"
+                if account.strategy_code == AI_PATTERN_TRADER
+                else "[]"
             ),
             maker_fee_rate=costs.maker_fee_rate,
             taker_fee_rate=costs.taker_fee_rate,
@@ -877,6 +994,24 @@ class TraderWorker:
                 default=None,
             ),
             exit_trigger_price=account.exit_trigger_price,
+            ai_mode=decision.ai_mode,
+            ai_proposed_action=decision.ai_proposed_action,
+            ai_regime=decision.ai_regime,
+            ai_pattern_cluster=decision.ai_pattern_cluster,
+            ai_confidence=decision.ai_confidence,
+            ai_neighbor_count=decision.ai_neighbor_count,
+            ai_positive_neighbor_rate=decision.ai_positive_neighbor_rate,
+            ai_expected_gross_return=decision.ai_expected_gross_return,
+            ai_expected_net_return=decision.ai_expected_net_return,
+            ai_worst_adverse_return=decision.ai_worst_adverse_return,
+            ai_model_version=decision.ai_model_version,
+            ai_training_samples=decision.ai_training_samples,
+            ai_validation_accuracy=decision.ai_validation_accuracy,
+            ai_validation_mae=decision.ai_validation_mae,
+            ai_risk_status=decision.ai_risk_status,
+            ai_risk_reason=decision.ai_risk_reason,
+            ai_horizon_candles=decision.ai_horizon_candles,
+            ai_feature_summary=decision.ai_feature_summary,
             technical_signal=decision.technical_signal,
             model_signal=decision.model_signal,
             final_signal=decision.final_signal,
@@ -1362,8 +1497,13 @@ def ensure_strategy_accounts(
                 if code == LARRY_WILLIAMS_91_TREND_FOLLOWER
                 else "CLASSIC"
                 if code in EMA9_CLASSIC_STRATEGY_CODES
+                else "AI_DYNAMIC"
+                if code == AI_PATTERN_TRADER
                 else "N/A"
             )
+            if code == AI_PATTERN_TRADER:
+                existing[code].ai_mode = get_settings().ai_pattern_mode
+                existing[code].ai_model_version = "AI-PATTERN-v1"
             continue
         copy_legacy_hybrid = code == CURRENT_HYBRID
         account = StrategyAccount(
@@ -1411,7 +1551,17 @@ def ensure_strategy_accounts(
                 if code == LARRY_WILLIAMS_91_TREND_FOLLOWER
                 else "CLASSIC"
                 if code in EMA9_CLASSIC_STRATEGY_CODES
+                else "AI_DYNAMIC"
+                if code == AI_PATTERN_TRADER
                 else "N/A"
+            ),
+            ai_mode=(get_settings().ai_pattern_mode if code == AI_PATTERN_TRADER else None),
+            ai_model_version=("AI-PATTERN-v1" if code == AI_PATTERN_TRADER else None),
+            ai_risk_status=("LEARNING" if code == AI_PATTERN_TRADER else None),
+            ai_risk_reason=(
+                "Waiting for the first autonomous pattern analysis."
+                if code == AI_PATTERN_TRADER
+                else None
             ),
         )
         session.add(account)

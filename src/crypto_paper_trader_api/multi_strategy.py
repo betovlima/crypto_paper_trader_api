@@ -27,6 +27,27 @@ class StrategyDecision:
     stop_loss_override: float | None = None
     take_profit_override: float | None = None
 
+    # Optional diagnostics emitted by the autonomous AI Pattern Trader.
+    ai_mode: str | None = None
+    ai_proposed_action: str | None = None
+    ai_regime: str | None = None
+    ai_pattern_cluster: int | None = None
+    ai_confidence: float | None = None
+    ai_upward_probability: float | None = None
+    ai_neighbor_count: int | None = None
+    ai_positive_neighbor_rate: float | None = None
+    ai_expected_gross_return: float | None = None
+    ai_expected_net_return: float | None = None
+    ai_worst_adverse_return: float | None = None
+    ai_model_version: str | None = None
+    ai_training_samples: int | None = None
+    ai_validation_accuracy: float | None = None
+    ai_validation_mae: float | None = None
+    ai_risk_status: str | None = None
+    ai_risk_reason: str | None = None
+    ai_horizon_candles: int | None = None
+    ai_feature_summary: str | None = None
+
 
 def _ema(row: pd.Series, period: int) -> float:
     return float(row[f"ema_{period}"])

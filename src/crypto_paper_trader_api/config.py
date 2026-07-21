@@ -76,6 +76,31 @@ class Settings(BaseSettings):
     ema9_period: int = Field(default=9, ge=2, le=100)
     ema9_entry_tick_rate: float = Field(default=0.0, ge=0, lt=0.01)
 
+    # Autonomous AI Pattern Trader. This remains PAPER_ONLY and learns directly
+    # from chronological OHLCV windows instead of selecting a handcrafted setup.
+    ai_pattern_mode: str = "PAPER_AUTONOMOUS"
+    ai_pattern_horizon_candles: int = Field(default=5, ge=2, le=24)
+    ai_pattern_min_training_rows: int = Field(default=240, ge=120, le=2000)
+    ai_pattern_training_max_rows: int = Field(default=900, ge=240, le=5000)
+    ai_pattern_neighbors: int = Field(default=32, ge=8, le=200)
+    ai_pattern_clusters: int = Field(default=8, ge=2, le=32)
+    ai_pattern_tree_count: int = Field(default=96, ge=32, le=300)
+    ai_pattern_tree_max_depth: int = Field(default=7, ge=3, le=20)
+    ai_pattern_min_samples_leaf: int = Field(default=6, ge=2, le=50)
+    ai_pattern_random_state: int = 91
+    ai_pattern_buy_probability_threshold: float = Field(default=0.61, ge=0.5, le=0.95)
+    ai_pattern_sell_probability_threshold: float = Field(default=0.43, ge=0.05, le=0.5)
+    ai_pattern_min_expected_net_return: float = Field(default=0.0015, ge=0, le=0.1)
+    ai_pattern_min_confidence: float = Field(default=0.52, ge=0, le=1)
+    ai_pattern_high_vol_min_confidence: float = Field(default=0.68, ge=0, le=1)
+    ai_pattern_max_spread_rate: float = Field(default=0.006, ge=0, le=0.05)
+    ai_pattern_stop_atr_multiplier: float = Field(default=1.8, gt=0, le=10)
+    ai_pattern_target_atr_multiplier: float = Field(default=2.8, gt=0, le=20)
+    ai_pattern_reward_risk_ratio: float = Field(default=1.8, gt=0, le=10)
+    ai_pattern_adverse_buffer: float = Field(default=0.75, gt=0, le=2)
+    ai_pattern_reward_drawdown_penalty: float = Field(default=0.30, ge=0, le=2)
+    ai_pattern_confident_rows: int = Field(default=600, ge=100, le=5000)
+
     @field_validator("default_market")
     @classmethod
     def normalize_market(cls, value: str) -> str:
@@ -83,6 +108,14 @@ class Settings(BaseSettings):
         if not cleaned or not cleaned.isalnum():
             raise ValueError("Market must contain only letters and numbers.")
         return cleaned
+
+    @field_validator("ai_pattern_mode")
+    @classmethod
+    def normalize_ai_pattern_mode(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in {"OBSERVATION", "PAPER_AUTONOMOUS"}:
+            raise ValueError("ai_pattern_mode must be OBSERVATION or PAPER_AUTONOMOUS")
+        return normalized
 
     @field_validator("vip_level")
     @classmethod
