@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "crypto-paper-trader"
-version = "0.11.0"
+version = "0.11.1"
 description = "A PAPER_ONLY crypto strategy research application with FastAPI, SQLite, autonomous pattern learning, EMA 9 and XGBoost."
 authors = ["Roberto"]
 readme = "README.md"
@@ -18,7 +18,6 @@ pandas = ">=2.2,<4.0"
 numpy = ">=2.0,<3.0"
 scikit-learn = ">=1.6,<2.0"
 xgboost = ">=2.1,<4.0"
-python-multipart = ">=0.0.20,<1.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.3,<9.0"

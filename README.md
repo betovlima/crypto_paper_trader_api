@@ -1,3 +1,9 @@
+# Release 0.11.1 — API responsibility split and database-only persistence
+
+This release completes the AI Pattern Trader integration in the shared "Latest state of all strategies" endpoint and dashboard. It also removes all CSV, JSON, ZIP and report-file generation. SQLite is now the only persistence mechanism, while JSON remains only the HTTP response format used by the API.
+
+The FastAPI application is split into routers and services by responsibility: system/configuration, experiments, strategy comparison, strategy data, AI Pattern Trader diagnostics and compatibility aliases. Read-only endpoints do not train models, execute trades or create strategy accounts. Existing strategy accounts are synchronized once during application startup.
+
 # Release 0.11.0 — Autonomous AI Pattern Trader
 
 This release adds a fifth independent paper portfolio, `AI_PATTERN_TRADER`. It does not select among the handcrafted strategies. On every newly closed decision candle it learns directly from chronological OHLCV windows using an Extra Trees return ensemble, nearest-neighbour pattern memory, unsupervised clustering, deterministic regime detection and a separate risk governor.
@@ -91,7 +97,7 @@ A passive benchmark that buys at the experiment start and displays its current l
 
 ## Downtime recovery
 
-When the worker restarts, it reads `last_processed_candle_at`, downloads every missing closed candle and replays them chronologically. Recovered entries and exits are always paper trades and are explicitly marked in the database, dashboard and on-demand in-memory exports. The application never converts a missed historical signal into a late purchase at the current market price.
+When the worker restarts, it reads `last_processed_candle_at`, downloads every missing closed candle and replays them chronologically. Recovered entries and exits are always paper trades and are explicitly marked in the database and dashboard. The application never converts a missed historical signal into a late purchase at the current market price.
 
 Hourly OHLC data cannot reveal the exact order of all intrabar events. During recovery, the simulator uses a conservative rule: if both a protective stop and target were touched in the same candle, the stop is assumed to have occurred first.
 
@@ -165,8 +171,8 @@ application use the mounted volume, or use the absolute SQLite URL
 
 The `/health` endpoint reports the resolved database path, whether the database file exists,
 and whether Railway exposed an attached volume. The SQLite database is the only persistent
-experiment data source. CSV/JSON and ZIP content is built in memory only when a download is
-requested.
+experiment data source. The application does not generate CSV, JSON, ZIP or HTML report files.
+JSON is used only as the HTTP representation returned by API endpoints.
 
 ## Manual stop/consolidation security
 
@@ -219,3 +225,24 @@ The application refuses to start on Railway when no persistent volume is detecte
 preventing experiments from silently running on ephemeral storage. When the API
 restarts, experiments persisted with status `RUNNING` or `STOP_REQUESTED` are picked
 up automatically by the worker and continue until their original scheduled end time.
+
+
+## API modules by responsibility
+
+The application entry point only configures FastAPI, CORS, startup and router registration. HTTP routes are separated into:
+
+- `api/routers/system.py`: health and public configuration;
+- `api/routers/experiments.py`: experiment lifecycle;
+- `api/routers/strategy_comparison.py`: latest state and grouped history for every strategy;
+- `api/routers/strategy_data.py`: decisions, trades and market snapshots for one strategy;
+- `api/routers/ai_pattern.py`: AI Pattern Trader status and predictions;
+- `api/routers/compatibility.py`: legacy read aliases only.
+
+Database query and business operations live under `services/`. The worker remains responsible for candle processing, model inference and paper-trade execution.
+
+AI-specific read endpoints:
+
+- `GET /api/v1/experiments/{experiment_id}/ai-pattern-trader/status`
+- `GET /api/v1/experiments/{experiment_id}/ai-pattern-trader/predictions?limit=80`
+
+There are no export or report-file endpoints.

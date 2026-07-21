@@ -23,7 +23,6 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     data_dir: Path = Path("./data")
-    reports_dir: Path | None = None
     database_url: str | None = None
 
     coinex_base_url: str = "https://api.coinex.com/v2"
@@ -169,12 +168,6 @@ class Settings(BaseSettings):
                 "Attach a volume to the API service, preferably at /data."
             )
         return None
-
-    @property
-    def resolved_reports_dir(self) -> Path:
-        path = (self.reports_dir or (self.resolved_data_dir / "reports")).expanduser().resolve()
-        path.mkdir(parents=True, exist_ok=True)
-        return path
 
     def validate_persistent_storage(self) -> None:
         """Fail fast on Railway when no persistent volume is attached.
