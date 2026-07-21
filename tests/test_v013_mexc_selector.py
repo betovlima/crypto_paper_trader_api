@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import httpx
 import pandas as pd
 import pytest
 
+from crypto_paper_trader_api.adaptive_strategy_research import StrategySpecification
 from crypto_paper_trader_api.config import Settings
 from crypto_paper_trader_api.execution_costs import ExecutionCosts
 from crypto_paper_trader_api.mexc_client import MEXCPublicClient
@@ -12,7 +15,6 @@ from crypto_paper_trader_api.multi_strategy import (
     AdaptiveStrategySelector,
     EmaPullbackStrategy,
     LarryVolatilityBreakoutStrategy,
-    StrategyDecision,
 )
 from crypto_paper_trader_api.strategy_codes import EMA_PULLBACK
 from crypto_paper_trader_api.trading_profiles import BALANCED_INTRADAY, get_trading_profile
@@ -95,33 +97,58 @@ def test_ema_pullback_and_larry_breakout_can_emit_intraday_buy() -> None:
     assert breakout.execution_reference_price == pytest.approx(102.0)
 
 
-def test_adaptive_selector_ranks_positive_net_candidate() -> None:
-    settings = Settings(_env_file=None)
+def test_adaptive_selector_executes_generated_strategy() -> None:
+    settings = Settings(_env_file=None, adaptive_research_web_enabled=False)
     selector_account = account("ADAPTIVE_STRATEGY_SELECTOR")
-    candidate = StrategyDecision(
-        technical_signal="BUY",
-        model_signal="NOT_USED",
-        final_signal="BUY",
-        technical_confirmations=6,
-        reason="qualified pullback",
-        execution_reference_price=103.0,
-        potential_target_price=105.0,
-        potential_gross_return=0.02,
-        reward_risk_ratio=2.0,
-        stop_loss_override=102.0,
-        take_profit_override=105.0,
+    spec = StrategySpecification(
+        code="GEN_TREND_PULLBACK_TEST",
+        name="Adaptive EMA ATR Pullback",
+        family="TREND_PULLBACK",
+        origin="SYSTEM_GENERATED",
+        rationale="test hypothesis",
+        allowed_regimes=("STRONG_UPTREND", "WEAK_UPTREND", "TRANSITION"),
+        fast_ema=9,
+        slow_ema=20,
+        regime_ema=200,
+        rsi_min=40,
+        rsi_max=70,
+        adx_min=18,
+        relative_volume_min=1.0,
+        pullback_atr=0.5,
     )
+    selector_account.selector_strategy_spec_json = spec.to_json()
+    selector_account.selector_selected_strategy = spec.code
+    selector_account.selector_active_strategy_name = spec.name
+    selector_account.selector_strategy_origin = spec.origin
+    selector_account.selector_research_status = "ACTIVE"
+    selector_account.selector_market_regime = "STRONG_UPTREND"
+    selector_account.selector_next_research_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    selector_account.selector_validation_score = 75.0
+
+    previous = row(close=101.5, low=100.5)
+    current = row(close=103.0, low=101.0)
+    frame = pd.DataFrame([previous.to_dict(), current.to_dict()])
+    frame["timestamp"] = pd.to_datetime(
+        ["2026-07-21T10:00:00Z", "2026-07-21T10:30:00Z"]
+    )
+    frame["return_3"] = [0.0, 0.01]
+    frame["atr_pct"] = frame["atr_14"] / frame["close"]
+
     decision = AdaptiveStrategySelector(settings).decide(
         selector_account,
-        row(),
+        current,
         row(close=105.0, ema_50=99.0),
         costs(),
-        {EMA_PULLBACK: candidate},
+        frame,
+        1,
+        "BTCUSDT",
+        "30min",
+        "1hour",
+        datetime.now(timezone.utc),
     )
     assert decision.final_signal == "BUY"
-    assert decision.selector_selected_strategy == EMA_PULLBACK
-    assert decision.selector_expected_net_return is not None
-    assert decision.selector_expected_net_return > settings.selector_min_expected_net_return
+    assert decision.selector_selected_strategy == spec.code
+    assert decision.selector_active_strategy_name == spec.name
 
 
 @pytest.mark.asyncio

@@ -160,10 +160,69 @@ class AIPatternStatusResponse(BaseModel):
     history: dict[str, Any] | None = None
 
 
-class AdminResetResponse(BaseModel):
-    status: Literal["ok"] = "ok"
-    deleted_experiments: int
-    ai_history_preserved: bool
+class StopRunningExperimentRequest(BaseModel):
+    close_open_positions: bool = True
+
+
+class StopRunningExperimentResponse(BaseModel):
+    status: Literal["STOPPED"] = "STOPPED"
+    experiment_id: str
+    previous_status: str
+    stopped_at: datetime
+    closed_positions: int
+    remaining_open_positions: int
+    data_preserved: Literal[True] = True
+    ai_scanner_running: bool
+
+
+class AIOpportunityScannerStatus(BaseModel):
+    enabled: bool
+    running: bool
+    status: str
+    universe_size: int
+    scanned_markets: int
+    opportunity_count: int
+    last_scan_started_at: datetime | None
+    last_scan_completed_at: datetime | None
+    next_scan_at: datetime | None
+    progress_percent: int = 0
+    current_step: int = 0
+    total_steps: int = 5
+    current_market: str | None = None
+    current_market_index: int = 0
+    total_markets: int = 0
+    analyzed_markets: int = 0
+    failed_markets: int = 0
+    classified_opportunities: int = 0
+    eligible_markets: int = 0
+    learning_markets: int = 0
+    training_window: int | None = None
+    scan_started_at: datetime | None = None
+    last_activity_at: datetime | None = None
+    last_error: str | None
+
+
+class AIOpportunityItem(BaseModel):
+    market: str
+    rank: int
+    score: float
+    action: str
+    market_price: float
+    entry_zone_low: float | None
+    entry_zone_high: float | None
+    trigger_price: float | None
+    stop_loss_price: float | None
+    target_price: float | None
+    regime: str | None
+    confidence: float | None
+    upward_probability: float | None
+    expected_net_return: float | None
+    quote_volume_24h: float
+    spread_rate: float
+    training_samples: int
+    model_version: str
+    reason: str
+    scanned_at: datetime
 
 
 class HealthResponse(BaseModel):
@@ -173,6 +232,7 @@ class HealthResponse(BaseModel):
     data_dir: str
     database_exists: bool
     worker_running: bool
+    ai_scanner_running: bool
     persistent_storage_configured: bool
     storage_warning: str | None = None
 
@@ -221,10 +281,30 @@ class PublicConfiguration(BaseModel):
     ai_pattern_min_confidence: float
     ai_pattern_max_spread_rate: float
     ai_pattern_model_version: str = "AI-PATTERN-v1"
+    ai_scanner_enabled: bool
+    ai_scanner_interval_seconds: int
+    ai_scanner_universe_size: int
+    ai_scanner_result_limit: int
+    ai_scanner_execution_timeframe: str
+    ai_scanner_trend_timeframe: str
     selector_min_confidence: float
     selector_min_expected_net_return: float
     selector_min_reward_risk_ratio: float
     selector_model_version: str
+    adaptive_research_web_enabled: bool
+    adaptive_research_openai_model: str
+    adaptive_research_ai_review_enabled: bool
+    adaptive_research_openai_review_model: str
+    adaptive_research_interval_hours: float
+    adaptive_research_retry_minutes: int
+    adaptive_research_min_candles: int
+    adaptive_research_validation_rows: int
+    adaptive_research_walk_forward_folds: int
+    adaptive_research_min_trades: int
+    adaptive_research_min_profit_factor: float
+    adaptive_research_max_drawdown_pct: float
+    adaptive_research_min_stability: float
+    adaptive_research_min_validation_score: float
 
 
 class PaginationMetadata(BaseModel):

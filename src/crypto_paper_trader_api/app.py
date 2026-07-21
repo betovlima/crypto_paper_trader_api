@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routers import (
-    admin,
+    ai_opportunities,
     ai_pattern,
     compatibility,
     experiments,
@@ -17,7 +17,7 @@ from .api.routers import (
 )
 from .database import init_database
 from .ai_database import init_ai_database
-from .runtime import settings, worker
+from .runtime import ai_scanner, settings, worker
 from .services.startup_service import synchronize_strategy_accounts
 
 logging.basicConfig(
@@ -42,19 +42,22 @@ async def lifespan(_app: FastAPI):
     )
     worker.start()
     worker.wake()
+    ai_scanner.start()
+    ai_scanner.wake()
     yield
     await worker.stop()
+    await ai_scanner.stop()
 
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.13.3",
+    version="0.15.0",
     description=(
         "PAPER_ONLY crypto strategy research using public MEXC Spot data. "
         "All persistent state is stored in SQLite. HTTP routers and application services "
         "are separated by responsibility; no CSV, JSON, ZIP or report files are generated. "
-        "AI Pattern Trader learns recurring OHLCV patterns and operates only an independent "
-        "simulated portfolio. The application contains no authenticated order or withdrawal endpoints."
+        "An independent AI Opportunity Scanner ranks liquid markets and remains active when "
+        "paper experiments are stopped. The application contains no authenticated order or withdrawal endpoints."
     ),
     lifespan=lifespan,
 )
@@ -67,8 +70,8 @@ app.add_middleware(
 )
 
 app.include_router(system.router)
-app.include_router(admin.router)
 app.include_router(experiments.router)
+app.include_router(ai_opportunities.router)
 app.include_router(strategy_comparison.router)
 app.include_router(strategy_data.router)
 app.include_router(ai_pattern.router)

@@ -103,13 +103,53 @@ class Settings(BaseSettings):
     ai_pattern_adverse_buffer: float = Field(default=0.75, gt=0, le=2)
     ai_pattern_reward_drawdown_penalty: float = Field(default=0.30, ge=0, le=2)
     ai_pattern_confident_rows: int = Field(default=3000, ge=100, le=50000)
+    ai_pattern_validation_rows: int = Field(default=240, ge=20, le=5000)
+    ai_pattern_candidate_windows: str = ""
+    ai_pattern_recent_regime_rows: int = Field(default=300, ge=120, le=5000)
 
-    # Adaptive Strategy Selector. Version 0.13.0 starts with an explainable
-    # rule-and-score model and records every selection for later supervised training.
+    # Independent AI Opportunity Scanner. It remains active even when the latest
+    # paper-trading experiment is stopped through the administrative endpoint.
+    ai_scanner_enabled: bool = True
+    ai_scanner_interval_seconds: int = Field(default=300, ge=60, le=3600)
+    ai_scanner_universe_size: int = Field(default=10, ge=3, le=50)
+    ai_scanner_result_limit: int = Field(default=5, ge=1, le=20)
+    ai_scanner_quote_asset: str = "USDT"
+    ai_scanner_execution_timeframe: str = "30min"
+    ai_scanner_trend_timeframe: str = "1hour"
+    ai_scanner_candle_limit: int = Field(default=3000, ge=800, le=5000)
+    ai_scanner_min_training_rows: int = Field(default=800, ge=240, le=3000)
+    ai_scanner_training_window: int = Field(default=2000, ge=500, le=5000)
+    ai_scanner_validation_rows: int = Field(default=240, ge=60, le=1000)
+    ai_scanner_recent_regime_rows: int = Field(default=500, ge=120, le=1500)
+    ai_scanner_candidate_windows: str = "800,1000,2000,3000"
+
+    # Adaptive Strategy Research Selector. It detects the current market regime,
+    # researches executable strategy hypotheses, validates them chronologically and
+    # promotes only cost-adjusted candidates that pass the configured risk gates.
     selector_min_confidence: float = Field(default=0.60, ge=0, le=1)
     selector_min_expected_net_return: float = Field(default=0.0030, ge=0, le=0.1)
     selector_min_reward_risk_ratio: float = Field(default=1.30, gt=0, le=10)
-    selector_model_version: str = "ADAPTIVE-SELECTOR-RULES-v1"
+    selector_model_version: str = "ADAPTIVE-RESEARCH-SELECTOR-v1"
+
+    adaptive_research_web_enabled: bool = True
+    adaptive_research_openai_model: str = "gpt-5"
+    adaptive_research_ai_review_enabled: bool = True
+    adaptive_research_openai_review_model: str = "gpt-5"
+    adaptive_research_web_timeout_seconds: float = Field(default=45.0, ge=5, le=180)
+    adaptive_research_interval_hours: float = Field(default=12.0, ge=1, le=168)
+    adaptive_research_retry_minutes: int = Field(default=30, ge=5, le=1440)
+    adaptive_research_min_candles: int = Field(default=800, ge=400, le=5000)
+    adaptive_research_validation_rows: int = Field(default=240, ge=60, le=1000)
+    adaptive_research_walk_forward_folds: int = Field(default=3, ge=2, le=8)
+    adaptive_research_max_candidates: int = Field(default=8, ge=2, le=20)
+    adaptive_research_min_trades: int = Field(default=20, ge=5, le=200)
+    adaptive_research_min_profit_factor: float = Field(default=1.20, ge=1.0, le=5.0)
+    adaptive_research_max_drawdown_pct: float = Field(default=0.10, gt=0, le=0.50)
+    adaptive_research_min_stability: float = Field(default=0.67, ge=0, le=1)
+    adaptive_research_min_validation_score: float = Field(default=60.0, ge=0, le=100)
+
+    # Used only by the server-side research agent. Never expose this value in the frontend.
+    openai_api_key: str | None = None
 
     # Larry volatility breakout and EMA pullback defaults for intraday profiles.
     larry_breakout_lookback: int = Field(default=12, ge=4, le=100)

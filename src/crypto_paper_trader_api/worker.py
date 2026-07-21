@@ -51,7 +51,6 @@ from .strategy_codes import (
     EMA9_STRATEGY_CODES,
     LARRY_VOLATILITY_BREAKOUT,
     LARRY_WILLIAMS_91_TREND_FOLLOWER,
-    SELECTOR_CANDIDATE_CODES,
     STRATEGY_DISPLAY_NAMES,
 )
 from .trading_profiles import (
@@ -124,6 +123,45 @@ class TraderWorker:
         async with self._processing_lock:
             yield
 
+    async def stop_latest_running_experiment(
+        self,
+        close_open_positions: bool,
+    ) -> dict[str, object]:
+        """Finalize the most recently started RUNNING experiment without touching AI scanner."""
+
+        async with self._processing_lock:
+            with SessionLocal() as session:
+                experiment = session.scalar(
+                    select(Experiment)
+                    .where(Experiment.status == "RUNNING")
+                    .order_by(Experiment.started_at.desc(), Experiment.id.desc())
+                    .limit(1)
+                )
+                if experiment is None:
+                    raise LookupError("No running experiment was found.")
+
+                previous_status = experiment.status
+                stopped_at = datetime.now(timezone.utc)
+                accounts = self._strategy_accounts(session, experiment.id)
+                open_before = sum(1 for account in accounts if account.has_open_position)
+                await self._finalize(
+                    session=session,
+                    experiment=experiment,
+                    finished_at=stopped_at,
+                    final_status="STOPPED",
+                    close_open_positions=close_open_positions,
+                )
+                remaining = sum(1 for account in accounts if account.has_open_position)
+                return {
+                    "experiment_id": experiment.id,
+                    "previous_status": previous_status,
+                    "status": "STOPPED",
+                    "stopped_at": stopped_at,
+                    "closed_positions": open_before - remaining,
+                    "remaining_open_positions": remaining,
+                    "data_preserved": True,
+                }
+
     async def _run_loop(self) -> None:
         logger.info(
             "PAPER_ONLY multi-strategy worker started; market interval=%ss",
@@ -162,7 +200,7 @@ class TraderWorker:
                 session.flush()
                 now = datetime.now(timezone.utc)
                 if experiment.status == "STOP_REQUESTED":
-                    await self._finalize(session, experiment, now, "MANUALLY_STOPPED")
+                    await self._finalize(session, experiment, now, "STOPPED")
                     return
                 if now >= self._as_utc(experiment.scheduled_end_at):
                     await self._finalize(session, experiment, now, "FINISHED")
@@ -733,17 +771,18 @@ class TraderWorker:
                     costs=costs,
                     profile=profile,
                 )
-            selector_candidates = {
-                code: decisions[code]
-                for code in SELECTOR_CANDIDATE_CODES
-                if code in decisions
-            }
-            selector_decision = self.adaptive_selector.decide(
-                account=selector_account,
-                current_row=execution_row,
-                trend_row=trend_row,
-                costs=costs,
-                candidates=selector_candidates,
+            selector_decision = await asyncio.to_thread(
+                self.adaptive_selector.decide,
+                selector_account,
+                execution_row,
+                trend_row,
+                costs,
+                ai_model_frame,
+                len(ai_model_frame) - 1,
+                experiment.market,
+                experiment.execution_timeframe,
+                experiment.trend_timeframe,
+                candle_end,
             )
             selector_account.selector_selected_strategy = (
                 selector_decision.selector_selected_strategy
@@ -756,6 +795,80 @@ class TraderWorker:
             )
             selector_account.selector_candidate_scores = selector_decision.selector_candidate_scores
             selector_account.selector_model_version = selector_decision.selector_model_version
+            selector_account.selector_active_strategy_name = (
+                selector_decision.selector_active_strategy_name
+                or selector_account.selector_active_strategy_name
+            )
+            selector_account.selector_strategy_origin = (
+                selector_decision.selector_strategy_origin
+                or selector_account.selector_strategy_origin
+            )
+            selector_account.selector_research_status = (
+                selector_decision.selector_research_status
+                or selector_account.selector_research_status
+            )
+            selector_account.selector_research_summary = (
+                selector_decision.selector_research_summary
+                or selector_account.selector_research_summary
+            )
+            selector_account.selector_validation_score = (
+                selector_decision.selector_validation_score
+                if selector_decision.selector_validation_score is not None
+                else selector_account.selector_validation_score
+            )
+            selector_account.selector_profit_factor = (
+                selector_decision.selector_profit_factor
+                if selector_decision.selector_profit_factor is not None
+                else selector_account.selector_profit_factor
+            )
+            selector_account.selector_max_drawdown_pct = (
+                selector_decision.selector_max_drawdown_pct
+                if selector_decision.selector_max_drawdown_pct is not None
+                else selector_account.selector_max_drawdown_pct
+            )
+            selector_account.selector_net_return = (
+                selector_decision.selector_net_return
+                if selector_decision.selector_net_return is not None
+                else selector_account.selector_net_return
+            )
+            selector_account.selector_trade_count = (
+                selector_decision.selector_trade_count
+                if selector_decision.selector_trade_count is not None
+                else selector_account.selector_trade_count
+            )
+            selector_account.selector_next_research_at = (
+                selector_decision.selector_next_research_at
+                or selector_account.selector_next_research_at
+            )
+            selector_account.selector_strategy_spec_json = (
+                selector_decision.selector_strategy_spec_json
+                or selector_account.selector_strategy_spec_json
+            )
+            selector_account.selector_source_urls_json = (
+                selector_decision.selector_source_urls_json
+                or selector_account.selector_source_urls_json
+            )
+            selector_account.selector_ai_provider = (
+                selector_decision.selector_ai_provider
+                or selector_account.selector_ai_provider
+            )
+            selector_account.selector_ai_model = (
+                selector_decision.selector_ai_model
+                or selector_account.selector_ai_model
+            )
+            selector_account.selector_ai_review_status = (
+                selector_decision.selector_ai_review_status
+                or selector_account.selector_ai_review_status
+            )
+            selector_account.selector_ai_review_score = (
+                selector_decision.selector_ai_review_score
+                if selector_decision.selector_ai_review_score is not None
+                else selector_account.selector_ai_review_score
+            )
+            selector_account.selector_ai_review_summary = (
+                selector_decision.selector_ai_review_summary
+                or selector_account.selector_ai_review_summary
+            )
             decisions[ADAPTIVE_STRATEGY_SELECTOR] = selector_decision
 
         for account in accounts:
@@ -1111,6 +1224,23 @@ class TraderWorker:
             selector_expected_net_return=decision.selector_expected_net_return,
             selector_candidate_scores=decision.selector_candidate_scores,
             selector_model_version=decision.selector_model_version,
+            selector_active_strategy_name=decision.selector_active_strategy_name,
+            selector_strategy_origin=decision.selector_strategy_origin,
+            selector_research_status=decision.selector_research_status,
+            selector_research_summary=decision.selector_research_summary,
+            selector_validation_score=decision.selector_validation_score,
+            selector_profit_factor=decision.selector_profit_factor,
+            selector_max_drawdown_pct=decision.selector_max_drawdown_pct,
+            selector_net_return=decision.selector_net_return,
+            selector_trade_count=decision.selector_trade_count,
+            selector_next_research_at=decision.selector_next_research_at,
+            selector_strategy_spec_json=decision.selector_strategy_spec_json,
+            selector_source_urls_json=decision.selector_source_urls_json,
+            selector_ai_provider=decision.selector_ai_provider,
+            selector_ai_model=decision.selector_ai_model,
+            selector_ai_review_status=decision.selector_ai_review_status,
+            selector_ai_review_score=decision.selector_ai_review_score,
+            selector_ai_review_summary=decision.selector_ai_review_summary,
             technical_signal=decision.technical_signal,
             model_signal=decision.model_signal,
             final_signal=decision.final_signal,
@@ -1305,6 +1435,7 @@ class TraderWorker:
         experiment: Experiment,
         finished_at: datetime,
         final_status: str,
+        close_open_positions: bool = True,
     ) -> None:
         costs = await self._resolve_execution_costs(experiment)
         profile = get_trading_profile(experiment.trading_profile)
@@ -1325,7 +1456,7 @@ class TraderWorker:
         best_ask = float(experiment.best_ask or market_price * (1 + costs.half_spread_rate))
         accounts = self._strategy_accounts(session, experiment.id)
         for account in accounts:
-            if account.has_open_position:
+            if close_open_positions and account.has_open_position:
                 self.broker.sell(
                     session=session,
                     experiment=experiment,
@@ -1350,7 +1481,11 @@ class TraderWorker:
             account.final_capital = equity.total_equity
             account.status = final_status
             account.last_event = final_status
-            account.last_status_message = "The experiment was finalized."
+            account.last_status_message = (
+                "The experiment was stopped and its data was preserved."
+                if final_status == "STOPPED"
+                else "The experiment was finalized."
+            )
             self._record_market_snapshot(
                 session=session,
                 experiment=experiment,
@@ -1362,7 +1497,11 @@ class TraderWorker:
                 costs=costs,
                 equity=equity,
                 event_type=final_status,
-                status_message="The experiment was finalized and consolidated.",
+                status_message=(
+                    "The experiment was stopped and consolidated without deleting data."
+                    if final_status == "STOPPED"
+                    else "The experiment was finalized and consolidated."
+                ),
             )
 
         experiment.last_price = market_price
