@@ -144,6 +144,24 @@ class StrategyComparisonHistoryResponse(BaseModel):
     strategies: list[StrategyComparisonHistoryItem]
 
 
+class AIPatternPerformanceResponse(BaseModel):
+    prediction_count: int
+    resolved_count: int
+    direction_accuracy: float | None
+    average_realized_net_return: float | None
+    average_reward: float | None
+
+
+class AIPatternStatusResponse(BaseModel):
+    experiment_id: str
+    market: str
+    mode: str
+    model_version: str
+    account: dict[str, Any] | None
+    latest_decision: dict[str, Any] | None
+    performance: AIPatternPerformanceResponse
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     mode: Literal["PAPER_ONLY"] = "PAPER_ONLY"
