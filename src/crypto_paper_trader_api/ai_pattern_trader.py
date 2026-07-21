@@ -19,7 +19,7 @@ from .multi_strategy import StrategyDecision
 from .trading_profiles import TradingProfile
 
 
-AI_PATTERN_MODEL_VERSION = "AI-PATTERN-v1"
+AI_PATTERN_MODEL_VERSION = "AI-PATTERN-v2-LONG-HISTORY"
 
 
 @dataclass(frozen=True)
@@ -123,7 +123,8 @@ class AIPatternTrader:
 
         validation_accuracy, validation_mae = self._time_ordered_validation(x, y)
         model = self._new_model()
-        model.fit(x, y)
+        sample_weight = self._recency_weights(training)
+        model.fit(x, y, sample_weight=sample_weight)
         tree_predictions = np.asarray(
             [float(tree.predict(current_x)[0]) for tree in model.estimators_], dtype=float
         )
@@ -359,6 +360,14 @@ class AIPatternTrader:
         data[feature_columns] = data[feature_columns].replace([np.inf, -np.inf], np.nan)
         return PatternDataset(frame=data, feature_columns=feature_columns)
 
+    def _recency_weights(self, training: pd.DataFrame) -> np.ndarray:
+        """Weight recent regimes more heavily without discarding older patterns."""
+        timestamps = pd.to_datetime(training["timestamp"], utc=True)
+        age_days = (timestamps.max() - timestamps).dt.total_seconds().to_numpy() / 86400.0
+        half_life = self.settings.ai_pattern_recency_half_life_days
+        weights = np.power(0.5, age_days / half_life)
+        return np.clip(weights, 0.10, 1.0)
+
     def _new_model(self) -> ExtraTreesRegressor:
         return ExtraTreesRegressor(
             n_estimators=self.settings.ai_pattern_tree_count,
@@ -376,8 +385,12 @@ class AIPatternTrader:
         training_size = len(x) - validation_size
         if training_size < max(100, self.settings.ai_pattern_min_training_rows // 2):
             return None, None
+        gap = self.settings.ai_pattern_horizon_candles
+        effective_training_size = training_size - gap
+        if effective_training_size < max(100, self.settings.ai_pattern_min_training_rows // 2):
+            return None, None
         model = self._new_model()
-        model.fit(x[:training_size], y[:training_size])
+        model.fit(x[:effective_training_size], y[:effective_training_size])
         predictions = model.predict(x[training_size:])
         actual = y[training_size:]
         accuracy = float(np.mean((predictions >= 0) == (actual >= 0)))

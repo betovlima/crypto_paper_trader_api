@@ -24,6 +24,7 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("./data")
     database_url: str | None = None
+    ai_database_url: str | None = None
 
     coinex_base_url: str = "https://api.coinex.com/v2"
     http_timeout_seconds: float = 20.0
@@ -79,8 +80,11 @@ class Settings(BaseSettings):
     # from chronological OHLCV windows instead of selecting a handcrafted setup.
     ai_pattern_mode: str = "PAPER_AUTONOMOUS"
     ai_pattern_horizon_candles: int = Field(default=5, ge=2, le=24)
-    ai_pattern_min_training_rows: int = Field(default=240, ge=120, le=2000)
-    ai_pattern_training_max_rows: int = Field(default=900, ge=240, le=5000)
+    ai_pattern_min_training_rows: int = Field(default=1000, ge=120, le=10000)
+    ai_pattern_training_max_rows: int = Field(default=8000, ge=240, le=50000)
+    ai_history_target_candles: int = Field(default=8760, ge=1000, le=50000)
+    ai_history_backfill_batches_per_cycle: int = Field(default=12, ge=1, le=50)
+    ai_pattern_recency_half_life_days: float = Field(default=120.0, ge=7, le=730)
     ai_pattern_neighbors: int = Field(default=32, ge=8, le=200)
     ai_pattern_clusters: int = Field(default=8, ge=2, le=32)
     ai_pattern_tree_count: int = Field(default=96, ge=32, le=300)
@@ -98,7 +102,7 @@ class Settings(BaseSettings):
     ai_pattern_reward_risk_ratio: float = Field(default=1.8, gt=0, le=10)
     ai_pattern_adverse_buffer: float = Field(default=0.75, gt=0, le=2)
     ai_pattern_reward_drawdown_penalty: float = Field(default=0.30, ge=0, le=2)
-    ai_pattern_confident_rows: int = Field(default=600, ge=100, le=5000)
+    ai_pattern_confident_rows: int = Field(default=3000, ge=100, le=50000)
 
     @field_validator("default_market")
     @classmethod
@@ -193,6 +197,13 @@ class Settings(BaseSettings):
             return self.database_url
 
         database_path = self.resolved_data_dir / "crypto_paper_trader_api.db"
+        return f"sqlite:///{database_path.as_posix()}"
+
+    @property
+    def resolved_ai_database_url(self) -> str:
+        if self.ai_database_url:
+            return self.ai_database_url
+        database_path = self.resolved_data_dir / "ai_pattern_trader.db"
         return f"sqlite:///{database_path.as_posix()}"
 
     @property

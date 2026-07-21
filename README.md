@@ -246,3 +246,8 @@ AI-specific read endpoints:
 - `GET /api/v1/experiments/{experiment_id}/ai-pattern-trader/predictions?limit=80`
 
 There are no export or report-file endpoints.
+
+
+## v0.12.0 — Long-history AI Pattern Trader
+
+The AI strategy now owns a separate SQLite database (`ai_pattern_trader.db`). Closed candles are synchronized incrementally from CoinEx with paginated `start_time` / `end_time` requests. The default target is 8,760 one-hour candles (approximately one year), while the model uses up to 8,000 valid chronological rows. Recent observations receive exponentially higher sample weights with a configurable 120-day half-life. Time-ordered validation includes a purge gap equal to the prediction horizon to reduce leakage. Traditional strategies continue using the normal recent execution window and the main database.
