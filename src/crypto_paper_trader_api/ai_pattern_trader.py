@@ -19,7 +19,7 @@ from .multi_strategy import StrategyDecision
 from .trading_profiles import TradingProfile
 
 
-AI_PATTERN_MODEL_VERSION = "AI-PATTERN-v2-LONG-HISTORY"
+AI_PATTERN_MODEL_VERSION = "AI-PATTERN-v3-ADAPTIVE-WINDOW"
 
 
 @dataclass(frozen=True)
@@ -117,11 +117,12 @@ class AIPatternTrader:
         if len(training) > self.settings.ai_pattern_training_max_rows:
             training = training.tail(self.settings.ai_pattern_training_max_rows).copy()
 
+        training, selected_window, validation_accuracy, validation_mae = (
+            self._select_adaptive_training_window(training, dataset.feature_columns)
+        )
         x = training[dataset.feature_columns].astype(float).to_numpy()
         y = training["future_gross_return"].astype(float).to_numpy()
         current_x = current[dataset.feature_columns].astype(float).to_numpy().reshape(1, -1)
-
-        validation_accuracy, validation_mae = self._time_ordered_validation(x, y)
         model = self._new_model()
         sample_weight = self._recency_weights(training)
         model.fit(x, y, sample_weight=sample_weight)
@@ -215,6 +216,7 @@ class AIPatternTrader:
             f"regime={regime}",
             f"pattern_cluster={cluster}",
             f"training_rows={len(training)}",
+            f"selected_training_window={selected_window}",
             f"similar_patterns={neighbour_count}",
             f"probability_up={upward_probability:.6f}",
             f"neighbour_positive_rate={neighbour_positive_rate:.6f}",
@@ -360,6 +362,55 @@ class AIPatternTrader:
         data[feature_columns] = data[feature_columns].replace([np.inf, -np.inf], np.nan)
         return PatternDataset(frame=data, feature_columns=feature_columns)
 
+
+    def _candidate_windows(self, available_rows: int) -> list[int]:
+        raw = self.settings.ai_pattern_candidate_windows.strip()
+        parsed: list[int] = []
+        if raw:
+            for item in raw.split(","):
+                try:
+                    value = int(item.strip())
+                except ValueError:
+                    continue
+                if value >= self.settings.ai_pattern_min_training_rows:
+                    parsed.append(value)
+        parsed.append(self.settings.ai_pattern_training_max_rows)
+        return sorted({min(value, available_rows) for value in parsed if value <= available_rows})
+
+    def _select_adaptive_training_window(
+        self, training: pd.DataFrame, feature_columns: list[str]
+    ) -> tuple[pd.DataFrame, int, float | None, float | None]:
+        candidates = self._candidate_windows(len(training))
+        if not candidates:
+            x = training[feature_columns].astype(float).to_numpy()
+            y = training["future_gross_return"].astype(float).to_numpy()
+            accuracy, mae = self._time_ordered_validation(x, y)
+            return training, len(training), accuracy, mae
+
+        best: tuple[float, int, float | None, float | None] | None = None
+        for window in candidates:
+            subset = training.tail(window)
+            x = subset[feature_columns].astype(float).to_numpy()
+            y = subset["future_gross_return"].astype(float).to_numpy()
+            accuracy, mae = self._time_ordered_validation(x, y)
+            if accuracy is None or mae is None:
+                continue
+            scale = max(float(np.mean(np.abs(y))), 1e-6)
+            score = accuracy - 0.10 * min(mae / scale, 5.0)
+            if best is None or score > best[0] or (score == best[0] and window > best[1]):
+                best = (score, window, accuracy, mae)
+
+        if best is None:
+            window = candidates[-1]
+            subset = training.tail(window).copy()
+            x = subset[feature_columns].astype(float).to_numpy()
+            y = subset["future_gross_return"].astype(float).to_numpy()
+            accuracy, mae = self._time_ordered_validation(x, y)
+            return subset, window, accuracy, mae
+
+        _, window, accuracy, mae = best
+        return training.tail(window).copy(), window, accuracy, mae
+
     def _recency_weights(self, training: pd.DataFrame) -> np.ndarray:
         """Weight recent regimes more heavily without discarding older patterns."""
         timestamps = pd.to_datetime(training["timestamp"], utc=True)
@@ -381,7 +432,10 @@ class AIPatternTrader:
     def _time_ordered_validation(
         self, x: np.ndarray, y: np.ndarray
     ) -> tuple[float | None, float | None]:
-        validation_size = max(20, int(len(x) * 0.20))
+        validation_size = min(
+            self.settings.ai_pattern_validation_rows,
+            max(20, int(len(x) * 0.20)),
+        )
         training_size = len(x) - validation_size
         if training_size < max(100, self.settings.ai_pattern_min_training_rows // 2):
             return None, None
@@ -419,10 +473,10 @@ class AIPatternTrader:
         adx = float(row["adx_14"])
         atr_pct = float(row["atr_pct"])
         volatility = float(row["volatility_20"])
-        atr_q75 = float(data["atr_pct"].dropna().tail(300).quantile(0.75))
-        atr_q25 = float(data["atr_pct"].dropna().tail(300).quantile(0.25))
-        vol_q75 = float(data["volatility_20"].dropna().tail(300).quantile(0.75))
-        vol_q25 = float(data["volatility_20"].dropna().tail(300).quantile(0.25))
+        atr_q75 = float(data["atr_pct"].dropna().tail(self.settings.ai_pattern_recent_regime_rows).quantile(0.75))
+        atr_q25 = float(data["atr_pct"].dropna().tail(self.settings.ai_pattern_recent_regime_rows).quantile(0.25))
+        vol_q75 = float(data["volatility_20"].dropna().tail(self.settings.ai_pattern_recent_regime_rows).quantile(0.75))
+        vol_q25 = float(data["volatility_20"].dropna().tail(self.settings.ai_pattern_recent_regime_rows).quantile(0.25))
         trend_bullish = (
             float(trend_row["close"]) > float(trend_row["ema_50"])
             and float(trend_row["ema_20"]) > float(trend_row["ema_50"])

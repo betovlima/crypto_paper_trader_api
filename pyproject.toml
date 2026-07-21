@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "crypto-paper-trader"
-version = "0.13.3"
-description = "A PAPER_ONLY crypto strategy research application with FastAPI, SQLite, autonomous pattern learning, EMA 9 and XGBoost."
+version = "0.15.3"
+description = "A PAPER_ONLY crypto strategy research application with adaptive web-assisted strategy generation, walk-forward validation and an independent AI opportunity scanner."
 authors = ["Roberto"]
 readme = "README.md"
 packages = [{ include = "crypto_paper_trader_api", from = "src" }]

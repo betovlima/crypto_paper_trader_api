@@ -63,23 +63,17 @@ def get_experiment(session: Session, experiment_id: str) -> ExperimentResponse:
     return ExperimentResponse.model_validate(experiment.to_public_dict())
 
 
-def request_stop(
-    session: Session,
-    experiment_id: str,
+async def stop_latest_running_experiment(
     worker: TraderWorker,
-) -> ExperimentResponse:
-    experiment = get_experiment_or_404(session, experiment_id)
-    if experiment.status != "RUNNING":
+    close_open_positions: bool,
+) -> dict[str, object]:
+    try:
+        return await worker.stop_latest_running_experiment(close_open_positions)
+    except LookupError as exc:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Experiment cannot be stopped from status {experiment.status}.",
-        )
-    experiment.status = "STOP_REQUESTED"
-    session.commit()
-    session.refresh(experiment)
-    worker.wake()
-    return ExperimentResponse.model_validate(experiment.to_public_dict())
-
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No running experiment was found.",
+        ) from exc
 
 
 def list_experiment_history(

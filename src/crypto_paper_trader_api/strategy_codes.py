@@ -32,7 +32,6 @@ ACTIVE_STRATEGY_CODES = (
     LARRY_WILLIAMS_91_CLASSIC,
     LARRY_WILLIAMS_91_TREND_FOLLOWER,
     LARRY_VOLATILITY_BREAKOUT,
-    AI_PATTERN_TRADER,
 )
 
 STRATEGY_DISPLAY_NAMES = {
@@ -50,9 +49,9 @@ STRATEGY_DISPLAY_NAMES = {
 
 STRATEGY_DESCRIPTIONS = {
     ADAPTIVE_STRATEGY_SELECTOR: (
-        "Evaluates the current market regime and every eligible strategy on the same closed "
-        "candle. It ranks candidates by expected net return, confidence and risk/reward, can "
-        "select one strategy or HOLD, and records the realized reward after each exit."
+        "Detects the current market regime, researches new executable strategy hypotheses, "
+        "backtests them with trading costs, validates them with chronological walk-forward "
+        "windows and activates only a generated strategy that passes risk and stability gates."
     ),
     CURRENT_HYBRID: (
         "Combines the selected profile's EMAs, RSI, ADX, relative volume and XGBoost "
@@ -114,10 +113,4 @@ DYNAMIC_RISK_STRATEGY_CODES = {
     AI_PATTERN_TRADER,
     ADAPTIVE_STRATEGY_SELECTOR,
 }
-SELECTOR_CANDIDATE_CODES = (
-    CURRENT_HYBRID,
-    EMA_CROSSOVER,
-    EMA_PULLBACK,
-    LARRY_VOLATILITY_BREAKOUT,
-    AI_PATTERN_TRADER,
-)
+

@@ -6,8 +6,14 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from ...database import get_session
-from ...runtime import settings, worker
-from ...schemas import ExperimentCreate, ExperimentHistoryResponse, ExperimentResponse
+from ...runtime import ai_scanner, settings, worker
+from ...schemas import (
+    ExperimentCreate,
+    ExperimentHistoryResponse,
+    ExperimentResponse,
+    StopRunningExperimentRequest,
+    StopRunningExperimentResponse,
+)
 from ...security import require_admin_key
 from ...services import experiment_service
 
@@ -64,12 +70,18 @@ def get_experiment(
 
 
 @router.post(
-    "/{experiment_id}/stop",
-    response_model=ExperimentResponse,
+    "/stop-running",
+    response_model=StopRunningExperimentResponse,
     dependencies=[Depends(require_admin_key)],
 )
-def request_stop(
-    experiment_id: str,
-    session: Session = Depends(get_session),
-) -> ExperimentResponse:
-    return experiment_service.request_stop(session, experiment_id, worker)
+async def stop_latest_running_experiment(
+    body: StopRunningExperimentRequest,
+) -> StopRunningExperimentResponse:
+    result = await experiment_service.stop_latest_running_experiment(
+        worker=worker,
+        close_open_positions=body.close_open_positions,
+    )
+    return StopRunningExperimentResponse(
+        **result,
+        ai_scanner_running=ai_scanner.is_running,
+    )

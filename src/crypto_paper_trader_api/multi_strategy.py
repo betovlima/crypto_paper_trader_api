@@ -6,6 +6,11 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from .adaptive_strategy_research import (
+    AdaptiveStrategyResearchEngine,
+    MarketRegimeAnalyzer,
+    StrategySpecification,
+)
 from .config import Settings
 from .execution_costs import ExecutionCosts
 from .ml_model import ModelPrediction
@@ -56,6 +61,23 @@ class StrategyDecision:
     selector_expected_net_return: float | None = None
     selector_candidate_scores: str | None = None
     selector_model_version: str | None = None
+    selector_active_strategy_name: str | None = None
+    selector_strategy_origin: str | None = None
+    selector_research_status: str | None = None
+    selector_research_summary: str | None = None
+    selector_validation_score: float | None = None
+    selector_profit_factor: float | None = None
+    selector_max_drawdown_pct: float | None = None
+    selector_net_return: float | None = None
+    selector_trade_count: int | None = None
+    selector_next_research_at: datetime | None = None
+    selector_strategy_spec_json: str | None = None
+    selector_source_urls_json: str | None = None
+    selector_ai_provider: str | None = None
+    selector_ai_model: str | None = None
+    selector_ai_review_status: str | None = None
+    selector_ai_review_score: float | None = None
+    selector_ai_review_summary: str | None = None
 
 
 def _ema(row: pd.Series, period: int) -> float:
@@ -547,32 +569,37 @@ class LarryVolatilityBreakoutStrategy:
 
 
 class AdaptiveStrategySelector:
-    """Explainable regime-aware ranking of independently evaluated strategies."""
+    """Researches, validates and executes a generated strategy for the selected market."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.engine = AdaptiveStrategyResearchEngine(settings)
 
     @staticmethod
     def detect_regime(current_row: pd.Series, trend_row: pd.Series) -> str:
-        close = float(current_row["close"])
-        ema20 = float(current_row["ema_20"])
-        ema50 = float(current_row["ema_50"])
-        ema200 = float(current_row["ema_200"])
-        adx = float(current_row["adx_14"])
-        volatility = float(current_row.get("volatility_20", 0.0) or 0.0)
-        trend_close = float(trend_row["close"])
-        trend_ema50 = float(trend_row["ema_50"])
-        if volatility >= 0.03:
-            return "HIGH_VOLATILITY"
-        if adx < 16:
-            return "SIDEWAYS"
-        if close > ema20 > ema50 > ema200 and trend_close > trend_ema50:
-            return "UPTREND"
-        if close < ema20 < ema50 and trend_close < trend_ema50:
-            return "DOWNTREND"
-        if adx >= 22 and abs(ema20 - ema50) / max(close, 1e-12) < 0.003:
-            return "VOLATILITY_EXPANSION"
-        return "UNDEFINED"
+        return MarketRegimeAnalyzer.detect(current_row, trend_row)
+
+    @staticmethod
+    def _as_utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def _needs_research(
+        self,
+        account: StrategyAccount,
+        regime: str,
+        now: datetime,
+    ) -> bool:
+        current_spec = StrategySpecification.from_json(account.selector_strategy_spec_json)
+        if current_spec is None:
+            return True
+        if account.selector_market_regime != regime:
+            return True
+        next_research = self._as_utc(account.selector_next_research_at)
+        return next_research is None or now >= next_research
 
     def decide(
         self,
@@ -580,127 +607,152 @@ class AdaptiveStrategySelector:
         current_row: pd.Series,
         trend_row: pd.Series,
         costs: ExecutionCosts,
-        candidates: dict[str, StrategyDecision],
+        research_frame: pd.DataFrame,
+        current_index: int,
+        market: str,
+        execution_timeframe: str,
+        trend_timeframe: str,
+        now: datetime,
     ) -> StrategyDecision:
         regime = self.detect_regime(current_row, trend_row)
         close = float(current_row["close"])
-        selected_code = account.selector_selected_strategy
+        active_spec = StrategySpecification.from_json(account.selector_strategy_spec_json)
 
-        if account.has_open_position:
-            selected = candidates.get(selected_code or "")
-            if selected is not None and selected.final_signal == "SELL":
-                reason = (
-                    f"selector_exit_from={selected_code}; market_regime={regime}; "
-                    f"candidate_reason={selected.reason}"
-                )
+        # An open paper position always remains attached to the strategy that opened it.
+        # Research can replace the active strategy only after the position is flat.
+        if not account.has_open_position and self._needs_research(account, regime, now):
+            outcome = self.engine.research(
+                market=market,
+                regime=regime,
+                execution_timeframe=execution_timeframe,
+                trend_timeframe=trend_timeframe,
+                frame=research_frame,
+                costs=costs,
+                now=now,
+            )
+            account.selector_market_regime = outcome.regime
+            account.selector_research_status = outcome.research_status
+            account.selector_research_summary = outcome.research_summary
+            account.selector_candidate_scores = outcome.candidate_scores_json
+            account.selector_source_urls_json = outcome.source_urls_json
+            account.selector_next_research_at = outcome.next_research_at
+            account.selector_model_version = self.settings.selector_model_version
+            account.selector_last_error = outcome.error_message
+            account.selector_ai_provider = outcome.ai_provider
+            account.selector_ai_model = outcome.ai_model
+            account.selector_ai_review_status = outcome.ai_review_status
+            account.selector_ai_review_score = outcome.ai_review_score
+            account.selector_ai_review_summary = outcome.ai_review_summary
+
+            if outcome.specification is None or outcome.metrics is None:
+                account.selector_selected_strategy = None
+                account.selector_active_strategy_name = None
+                account.selector_strategy_origin = None
+                account.selector_strategy_spec_json = None
+                account.selector_validation_score = None
+                account.selector_profit_factor = None
+                account.selector_max_drawdown_pct = None
+                account.selector_net_return = None
+                account.selector_trade_count = None
                 return StrategyDecision(
-                    "SELL", "SELECTOR", "SELL", selected.technical_confirmations,
-                    reason, close,
-                    selector_selected_strategy=selected_code,
+                    "HOLD", "RESEARCH_SELECTOR", "HOLD", 0,
+                    outcome.research_summary,
                     selector_market_regime=regime,
-                    selector_confidence=account.selector_confidence,
-                    selector_expected_net_return=account.selector_expected_net_return,
-                    selector_candidate_scores=account.selector_candidate_scores,
+                    selector_candidate_scores=outcome.candidate_scores_json,
                     selector_model_version=self.settings.selector_model_version,
+                    selector_research_status=outcome.research_status,
+                    selector_research_summary=outcome.research_summary,
+                    selector_next_research_at=outcome.next_research_at,
+                    selector_source_urls_json=outcome.source_urls_json,
+                    selector_ai_provider=outcome.ai_provider,
+                    selector_ai_model=outcome.ai_model,
+                    selector_ai_review_status=outcome.ai_review_status,
+                    selector_ai_review_score=outcome.ai_review_score,
+                    selector_ai_review_summary=outcome.ai_review_summary,
                 )
-            reason = f"selector_position_maintained; selected_strategy={selected_code}; market_regime={regime}"
+
+            active_spec = outcome.specification
+            metrics = outcome.metrics
+            account.selector_selected_strategy = active_spec.code
+            account.selector_active_strategy_name = active_spec.name
+            account.selector_strategy_origin = active_spec.origin
+            account.selector_strategy_spec_json = active_spec.to_json()
+            account.selector_validation_score = metrics.score
+            account.selector_profit_factor = metrics.profit_factor
+            account.selector_max_drawdown_pct = metrics.max_drawdown_pct
+            account.selector_net_return = metrics.net_return
+            account.selector_trade_count = metrics.trade_count
+            account.selector_confidence = min(max(metrics.score / 100.0, 0.0), 1.0)
+            account.selector_expected_net_return = metrics.net_return
+
+        if active_spec is None:
+            reason = account.selector_research_summary or (
+                "No generated strategy has passed the validation requirements yet."
+            )
             return StrategyDecision(
-                "HOLD", "SELECTOR", "HOLD", 0, reason,
-                selector_selected_strategy=selected_code,
+                "HOLD", "RESEARCH_SELECTOR", "HOLD", 0, reason,
                 selector_market_regime=regime,
-                selector_confidence=account.selector_confidence,
-                selector_expected_net_return=account.selector_expected_net_return,
                 selector_candidate_scores=account.selector_candidate_scores,
                 selector_model_version=self.settings.selector_model_version,
+                selector_research_status=account.selector_research_status or "WAITING_FOR_VALID_STRATEGY",
+                selector_research_summary=reason,
+                selector_next_research_at=account.selector_next_research_at,
+                selector_source_urls_json=account.selector_source_urls_json,
+                selector_ai_provider=account.selector_ai_provider,
+                selector_ai_model=account.selector_ai_model,
+                selector_ai_review_status=account.selector_ai_review_status,
+                selector_ai_review_score=account.selector_ai_review_score,
+                selector_ai_review_summary=account.selector_ai_review_summary,
             )
 
-        regime_boosts: dict[str, dict[str, float]] = {
-            "UPTREND": {"EMA_PULLBACK": 0.10, "EMA_CROSSOVER_COST_AWARE": 0.05, "LARRY_VOLATILITY_BREAKOUT": 0.05},
-            "VOLATILITY_EXPANSION": {"LARRY_VOLATILITY_BREAKOUT": 0.12, "EMA_CROSSOVER_COST_AWARE": 0.04},
-            "SIDEWAYS": {"AI_PATTERN_TRADER": 0.04},
-            "HIGH_VOLATILITY": {"LARRY_VOLATILITY_BREAKOUT": 0.03},
-        }
-        score_rows: list[dict[str, object]] = []
-        for code, decision in candidates.items():
-            gross = float(
-                decision.ai_expected_gross_return
-                if decision.ai_expected_gross_return is not None
-                else decision.potential_gross_return or 0.0
-            )
-            net = float(
-                decision.ai_expected_net_return
-                if decision.ai_expected_net_return is not None
-                else gross - costs.estimated_round_trip_rate
-            )
-            confidence = float(
-                decision.ai_confidence
-                if decision.ai_confidence is not None
-                else min(0.50 + 0.06 * decision.technical_confirmations, 0.90)
-            )
-            confidence = min(confidence + regime_boosts.get(regime, {}).get(code, 0.0), 0.99)
-            rr = float(decision.reward_risk_ratio or 0.0)
-            eligible = all(
-                [
-                    decision.final_signal == "BUY",
-                    confidence >= self.settings.selector_min_confidence,
-                    net >= self.settings.selector_min_expected_net_return,
-                    rr >= self.settings.selector_min_reward_risk_ratio,
-                    regime != "DOWNTREND",
-                ]
-            )
-            score = net * 100.0 + confidence + min(rr, 5.0) * 0.05
-            score_rows.append(
-                {
-                    "strategy": code,
-                    "signal": decision.final_signal,
-                    "confidence": round(confidence, 6),
-                    "expected_gross_return": round(gross, 8),
-                    "expected_net_return": round(net, 8),
-                    "reward_risk_ratio": round(rr, 6),
-                    "eligible": eligible,
-                    "score": round(score, 8),
-                }
-            )
-        score_rows.sort(key=lambda item: float(item["score"]), reverse=True)
-        candidate_scores = json.dumps(score_rows, separators=(",", ":"))
-        approved = [item for item in score_rows if bool(item["eligible"])]
-        if not approved:
-            reason = (
-                f"market_regime={regime}; no_candidate_met_selector_thresholds; "
-                f"min_confidence={self.settings.selector_min_confidence:.4f}; "
-                f"min_expected_net_return={self.settings.selector_min_expected_net_return:.6f}; "
-                f"min_reward_risk={self.settings.selector_min_reward_risk_ratio:.4f}"
-            )
-            return StrategyDecision(
-                "HOLD", "SELECTOR", "HOLD", 0, reason,
-                selector_market_regime=regime,
-                selector_candidate_scores=candidate_scores,
-                selector_model_version=self.settings.selector_model_version,
-            )
-
-        winner = approved[0]
-        winner_code = str(winner["strategy"])
-        source = candidates[winner_code]
+        live = self.engine.executor.live_decision(
+            spec=active_spec,
+            account=account,
+            frame=research_frame,
+            current_index=current_index,
+            regime=regime,
+        )
+        signal = str(live["signal"])
         reason = (
-            f"market_regime={regime}; selected_strategy={winner_code}; "
-            f"selector_confidence={float(winner['confidence']):.6f}; "
-            f"expected_net_return={float(winner['expected_net_return']):.6f}; "
-            f"source_reason={source.reason}"
+            f"generated_strategy={active_spec.code}; name={active_spec.name}; "
+            f"origin={active_spec.origin}; regime={regime}; rule={live['reason']}; "
+            f"validation_score={float(account.selector_validation_score or 0):.2f}"
         )
         return StrategyDecision(
-            "BUY", "SELECTOR", "BUY", source.technical_confirmations, reason,
-            source.execution_reference_price or close,
-            potential_target_price=source.potential_target_price,
-            potential_gross_return=source.potential_gross_return,
-            reward_risk_ratio=source.reward_risk_ratio,
-            stop_loss_override=source.stop_loss_override,
-            take_profit_override=source.take_profit_override,
-            selector_selected_strategy=winner_code,
+            signal,
+            "RESEARCH_SELECTOR",
+            signal,
+            0,
+            reason,
+            live.get("execution_reference_price") or close,
+            potential_target_price=live.get("take_profit"),
+            potential_gross_return=live.get("potential_gross_return"),
+            reward_risk_ratio=live.get("reward_risk_ratio"),
+            stop_loss_override=live.get("stop_loss"),
+            take_profit_override=live.get("take_profit"),
+            selector_selected_strategy=active_spec.code,
             selector_market_regime=regime,
-            selector_confidence=float(winner["confidence"]),
-            selector_expected_net_return=float(winner["expected_net_return"]),
-            selector_candidate_scores=candidate_scores,
+            selector_confidence=account.selector_confidence,
+            selector_expected_net_return=account.selector_expected_net_return,
+            selector_candidate_scores=account.selector_candidate_scores,
             selector_model_version=self.settings.selector_model_version,
+            selector_active_strategy_name=active_spec.name,
+            selector_strategy_origin=active_spec.origin,
+            selector_research_status=account.selector_research_status or "ACTIVE",
+            selector_research_summary=account.selector_research_summary,
+            selector_validation_score=account.selector_validation_score,
+            selector_profit_factor=account.selector_profit_factor,
+            selector_max_drawdown_pct=account.selector_max_drawdown_pct,
+            selector_net_return=account.selector_net_return,
+            selector_trade_count=account.selector_trade_count,
+            selector_next_research_at=account.selector_next_research_at,
+            selector_strategy_spec_json=active_spec.to_json(),
+            selector_source_urls_json=account.selector_source_urls_json,
+            selector_ai_provider=account.selector_ai_provider,
+            selector_ai_model=account.selector_ai_model,
+            selector_ai_review_status=account.selector_ai_review_status,
+            selector_ai_review_score=account.selector_ai_review_score,
+            selector_ai_review_summary=account.selector_ai_review_summary,
         )
 
 

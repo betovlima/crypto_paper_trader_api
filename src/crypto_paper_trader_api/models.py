@@ -482,8 +482,38 @@ class StrategyAccount(Base):
     selector_expected_net_return: Mapped[float | None] = mapped_column(Float, nullable=True)
     selector_candidate_scores: Mapped[str | None] = mapped_column(Text, nullable=True)
     selector_model_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    selector_active_strategy_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    selector_strategy_origin: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    selector_research_status: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    selector_research_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selector_validation_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_profit_factor: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_max_drawdown_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_net_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_trade_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    selector_next_research_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    selector_strategy_spec_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selector_source_urls_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selector_ai_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    selector_ai_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    selector_ai_review_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    selector_ai_review_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_ai_review_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selector_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     selector_last_reward: Mapped[float | None] = mapped_column(Float, nullable=True)
     selector_last_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Immutable attribution for the strategy that opened the current selector position.
+    # Research fields above may change for the next operation, while these fields remain
+    # attached to the open position until it is closed.
+    selector_position_strategy_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    selector_position_strategy_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    selector_position_strategy_origin: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    selector_position_strategy_spec_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selector_position_validation_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_position_opened_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
@@ -585,8 +615,75 @@ class StrategyAccount(Base):
             "selector_expected_net_return": self.selector_expected_net_return,
             "selector_candidate_scores": self.selector_candidate_scores,
             "selector_model_version": self.selector_model_version,
+            "selector_active_strategy_name": self.selector_active_strategy_name,
+            "selector_strategy_origin": self.selector_strategy_origin,
+            "selector_research_status": self.selector_research_status,
+            "selector_research_summary": self.selector_research_summary,
+            "selector_validation_score": self.selector_validation_score,
+            "selector_profit_factor": self.selector_profit_factor,
+            "selector_max_drawdown_pct": self.selector_max_drawdown_pct,
+            "selector_net_return": self.selector_net_return,
+            "selector_trade_count": self.selector_trade_count,
+            "selector_next_research_at": self.selector_next_research_at,
+            "selector_strategy_spec_json": self.selector_strategy_spec_json,
+            "selector_source_urls_json": self.selector_source_urls_json,
+            "selector_ai_provider": self.selector_ai_provider,
+            "selector_ai_model": self.selector_ai_model,
+            "selector_ai_review_status": self.selector_ai_review_status,
+            "selector_ai_review_score": self.selector_ai_review_score,
+            "selector_ai_review_summary": self.selector_ai_review_summary,
+            "selector_last_error": self.selector_last_error,
             "selector_last_reward": self.selector_last_reward,
             "selector_last_completed_at": self.selector_last_completed_at,
+            "selector_position_strategy_code": (
+                self.selector_position_strategy_code
+                or (
+                    self.selector_selected_strategy
+                    if self.strategy_code == "ADAPTIVE_STRATEGY_SELECTOR" and self.has_open_position
+                    else None
+                )
+            ),
+            "selector_position_strategy_name": (
+                self.selector_position_strategy_name
+                or (
+                    self.selector_active_strategy_name
+                    if self.strategy_code == "ADAPTIVE_STRATEGY_SELECTOR" and self.has_open_position
+                    else None
+                )
+            ),
+            "selector_position_strategy_origin": (
+                self.selector_position_strategy_origin
+                or (
+                    self.selector_strategy_origin
+                    if self.strategy_code == "ADAPTIVE_STRATEGY_SELECTOR" and self.has_open_position
+                    else None
+                )
+            ),
+            "selector_position_strategy_spec_json": (
+                self.selector_position_strategy_spec_json
+                or (
+                    self.selector_strategy_spec_json
+                    if self.strategy_code == "ADAPTIVE_STRATEGY_SELECTOR" and self.has_open_position
+                    else None
+                )
+            ),
+            "selector_position_validation_score": (
+                self.selector_position_validation_score
+                if self.selector_position_validation_score is not None
+                else (
+                    self.selector_validation_score
+                    if self.strategy_code == "ADAPTIVE_STRATEGY_SELECTOR" and self.has_open_position
+                    else None
+                )
+            ),
+            "selector_position_opened_at": (
+                self.selector_position_opened_at
+                or (
+                    self.entry_time
+                    if self.strategy_code == "ADAPTIVE_STRATEGY_SELECTOR" and self.has_open_position
+                    else None
+                )
+            ),
         }
 
 
@@ -702,6 +799,23 @@ class StrategyDecisionSnapshot(Base):
     selector_expected_net_return: Mapped[float | None] = mapped_column(Float, nullable=True)
     selector_candidate_scores: Mapped[str | None] = mapped_column(Text, nullable=True)
     selector_model_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    selector_active_strategy_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    selector_strategy_origin: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    selector_research_status: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    selector_research_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selector_validation_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_profit_factor: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_max_drawdown_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_net_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_trade_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    selector_next_research_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    selector_strategy_spec_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selector_source_urls_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selector_ai_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    selector_ai_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    selector_ai_review_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    selector_ai_review_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_ai_review_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Delayed chronological reward evaluation. A prediction is resolved only after
     # its configured future candle becomes available.
