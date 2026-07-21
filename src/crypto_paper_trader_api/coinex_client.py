@@ -114,16 +114,20 @@ class CoinExPublicClient:
         period: str,
         limit: int = 500,
         closed_only: bool = True,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
     ) -> pd.DataFrame:
         if period not in TIMEFRAME_SECONDS:
             raise ValueError(f"Unsupported CoinEx timeframe: {period}")
         if not 1 <= limit <= 1000:
             raise ValueError("limit must be between 1 and 1000")
 
-        response = await self._get(
-            "/spot/kline",
-            params={"market": market, "period": period, "limit": limit},
-        )
+        params: dict[str, Any] = {"market": market, "period": period, "limit": limit}
+        if start_time_ms is not None:
+            params["start_time"] = int(start_time_ms)
+        if end_time_ms is not None:
+            params["end_time"] = int(end_time_ms)
+        response = await self._get("/spot/kline", params=params)
         payload = self._parse_response(response)
         rows = payload.get("data") or []
         if not rows:

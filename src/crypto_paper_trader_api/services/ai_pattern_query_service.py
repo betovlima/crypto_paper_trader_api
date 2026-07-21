@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings
 from ..models import StrategyAccount, StrategyDecisionSnapshot
+from ..ai_database import AISessionLocal
+from ..ai_candle_repository import AICandleRepository
 from ..strategy_codes import AI_PATTERN_TRADER
 from .common import get_experiment_or_404
 from .strategy_query_service import strategy_summary
 
-MODEL_VERSION = "AI-PATTERN-v1"
+MODEL_VERSION = "AI-PATTERN-v2-LONG-HISTORY"
 
 
 def get_ai_pattern_status(
@@ -63,6 +65,18 @@ def get_ai_pattern_status(
         )
     )
 
+    with AISessionLocal() as ai_session:
+        ai_coverage = AICandleRepository().coverage(
+            ai_session, experiment.market, experiment.execution_timeframe
+        )
+    history = {
+        **ai_coverage,
+        "target_candles": settings.ai_history_target_candles,
+        "training_max_rows": settings.ai_pattern_training_max_rows,
+        "timeframe": experiment.execution_timeframe,
+        "database": "ai_pattern_trader.db",
+    }
+
     return {
         "experiment_id": experiment.id,
         "market": experiment.market,
@@ -72,6 +86,7 @@ def get_ai_pattern_status(
             strategy_summary(session, account, experiment.last_price) if account is not None else None
         ),
         "latest_decision": latest.to_dict() if latest is not None else None,
+        "history": history,
         "performance": {
             "prediction_count": prediction_count,
             "resolved_count": resolved_count,

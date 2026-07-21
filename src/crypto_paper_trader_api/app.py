@@ -15,6 +15,7 @@ from .api.routers import (
     system,
 )
 from .database import init_database
+from .ai_database import init_ai_database
 from .runtime import settings, worker
 from .services.startup_service import synchronize_strategy_accounts
 
@@ -28,12 +29,14 @@ logging.basicConfig(
 async def lifespan(_app: FastAPI):
     settings.validate_persistent_storage()
     init_database()
+    init_ai_database()
     synchronize_strategy_accounts()
     if settings.storage_warning:
         logging.getLogger(__name__).warning(settings.storage_warning)
     logging.getLogger(__name__).info(
-        "SQLite database path: %s; Railway persistent volume attached: %s",
+        "SQLite databases: main=%s ai=%s; Railway persistent volume attached: %s",
         settings.resolved_database_url,
+        settings.resolved_ai_database_url,
         settings.persistent_storage_configured,
     )
     worker.start()
@@ -44,7 +47,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.11.1",
+    version="0.12.0",
     description=(
         "PAPER_ONLY crypto strategy research using public CoinEx Spot data. "
         "All persistent state is stored in SQLite. HTTP routers and application services "

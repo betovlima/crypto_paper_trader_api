@@ -94,7 +94,7 @@ def test_one_closed_candle_creates_all_strategy_decisions() -> None:
         ema9_rows = [item for item in decisions if item.strategy_code.startswith("EMA9")]
         assert all(item.ema_9 is not None for item in ema9_rows)
         ai_row = next(item for item in decisions if item.strategy_code == AI_PATTERN_TRADER)
-        assert ai_row.ai_model_version == "AI-PATTERN-v1"
+        assert ai_row.ai_model_version == "AI-PATTERN-v2-LONG-HISTORY"
         assert ai_row.ai_risk_status in {"LEARNING", "MONITORING", "APPROVED", "BLOCKED"}
 
 

@@ -11,6 +11,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from .ai_pattern_trader import AIPatternTrader
+from .ai_history_service import AIHistoryService
 from .coinex_client import CoinExPublicClient, TIMEFRAME_SECONDS
 from .config import Settings, get_settings
 from .database import SessionLocal
@@ -69,6 +70,7 @@ class TraderWorker:
             settings=settings, cost_aware=False, mode=Ema9Setup91Strategy.TREND_FOLLOWER
         )
         self.ai_pattern_strategy = AIPatternTrader(settings)
+        self.ai_history_service = AIHistoryService(settings, self.client)
         # Backward-compatible attribute used by older tests/integrations.
         self.ema9_strategy = self.ema9_classic_strategy
         self.broker = MultiStrategyPaperBroker(settings)
@@ -366,7 +368,11 @@ class TraderWorker:
             trend_candles,
         )
 
+        ai_execution_candles = await self.ai_history_service.synchronize(
+            experiment.market, experiment.execution_timeframe, execution_candles
+        )
         execution_indicators = add_indicators(execution_candles)
+        ai_execution_indicators = add_indicators(ai_execution_candles)
         trend_indicators = add_indicators(trend_candles)
         latest_complete_row(execution_indicators)
         latest_complete_row(trend_indicators)
@@ -447,6 +453,7 @@ class TraderWorker:
                 session=session,
                 experiment=experiment,
                 execution_indicators=execution_indicators,
+                ai_execution_indicators=ai_execution_indicators,
                 trend_indicators=trend_indicators,
                 current_index=current_index,
                 costs=costs,
@@ -487,6 +494,7 @@ class TraderWorker:
         session: Session,
         experiment: Experiment,
         execution_indicators: pd.DataFrame,
+        ai_execution_indicators: pd.DataFrame,
         trend_indicators: pd.DataFrame,
         current_index: int,
         costs: ExecutionCosts,
@@ -525,6 +533,11 @@ class TraderWorker:
             sell_threshold=profile.sell_probability_threshold,
         )
         model_frame = execution_indicators.iloc[: current_index + 1].copy()
+        ai_model_frame = ai_execution_indicators[
+            ai_execution_indicators["timestamp"] <= pd.Timestamp(candle_timestamp)
+        ].copy()
+        if ai_model_frame.empty:
+            ai_model_frame = model_frame
         prediction = await asyncio.to_thread(model.fit_predict, model_frame)
 
         events: dict[str, tuple[str, str]] = {}
@@ -644,7 +657,7 @@ class TraderWorker:
                 decision = await asyncio.to_thread(
                     self.ai_pattern_strategy.decide,
                     account,
-                    model_frame,
+                    ai_model_frame,
                     trend_row,
                     costs,
                     candle_end,

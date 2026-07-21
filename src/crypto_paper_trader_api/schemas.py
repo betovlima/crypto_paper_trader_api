@@ -160,6 +160,7 @@ class AIPatternStatusResponse(BaseModel):
     account: dict[str, Any] | None
     latest_decision: dict[str, Any] | None
     performance: AIPatternPerformanceResponse
+    history: dict[str, Any] | None = None
 
 
 class HealthResponse(BaseModel):
