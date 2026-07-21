@@ -37,6 +37,7 @@ def init_database() -> None:
 
     Base.metadata.create_all(bind=engine)
     _migrate_additive_columns()
+    _migrate_active_coinex_experiments_to_mexc()
 
 
 def _migrate_additive_columns() -> None:
@@ -54,10 +55,10 @@ def _migrate_additive_columns() -> None:
             "entry_time": "DATETIME",
             "initial_risk_per_unit": "FLOAT",
             "break_even_activated": "BOOLEAN NOT NULL DEFAULT 0",
-            "vip_level": "VARCHAR(16) NOT NULL DEFAULT 'VIP0'",
-            "maker_fee_rate": "FLOAT NOT NULL DEFAULT 0.002",
-            "taker_fee_rate": "FLOAT NOT NULL DEFAULT 0.002",
-            "fee_source": "VARCHAR(64) NOT NULL DEFAULT 'CONFIG_VIP0'",
+            "vip_level": "VARCHAR(16) NOT NULL DEFAULT 'API_SPOT'",
+            "maker_fee_rate": "FLOAT NOT NULL DEFAULT 0.0",
+            "taker_fee_rate": "FLOAT NOT NULL DEFAULT 0.0005",
+            "fee_source": "VARCHAR(64) NOT NULL DEFAULT 'MEXC_API_CONFIG'",
             "min_market_amount": "FLOAT",
             "base_currency": "VARCHAR(16)",
             "quote_currency": "VARCHAR(16)",
@@ -98,6 +99,14 @@ def _migrate_additive_columns() -> None:
             "ai_risk_status": "VARCHAR(32)",
             "ai_risk_reason": "TEXT",
             "ai_last_prediction_at": "DATETIME",
+            "selector_selected_strategy": "VARCHAR(64)",
+            "selector_market_regime": "VARCHAR(32)",
+            "selector_confidence": "FLOAT",
+            "selector_expected_net_return": "FLOAT",
+            "selector_candidate_scores": "TEXT",
+            "selector_model_version": "VARCHAR(64)",
+            "selector_last_reward": "FLOAT",
+            "selector_last_completed_at": "DATETIME",
         },
         "strategy_decision_snapshots": {
             "fast_ema_period": "INTEGER",
@@ -136,28 +145,35 @@ def _migrate_additive_columns() -> None:
             "ai_realized_reward": "FLOAT",
             "ai_realized_adverse_return": "FLOAT",
             "ai_direction_correct": "BOOLEAN",
+            "selector_selected_strategy": "VARCHAR(64)",
+            "selector_market_regime": "VARCHAR(32)",
+            "selector_confidence": "FLOAT",
+            "selector_expected_net_return": "FLOAT",
+            "selector_candidate_scores": "TEXT",
+            "selector_model_version": "VARCHAR(64)",
         },
         "decision_snapshots": {
             "candle_high": "FLOAT NOT NULL DEFAULT 0",
             "candle_low": "FLOAT NOT NULL DEFAULT 0",
-            "maker_fee_rate": "FLOAT NOT NULL DEFAULT 0.002",
-            "taker_fee_rate": "FLOAT NOT NULL DEFAULT 0.002",
+            "maker_fee_rate": "FLOAT NOT NULL DEFAULT 0.0",
+            "taker_fee_rate": "FLOAT NOT NULL DEFAULT 0.0005",
             "spread_rate": "FLOAT NOT NULL DEFAULT 0.0002",
             "slippage_rate": "FLOAT NOT NULL DEFAULT 0.0005",
-            "estimated_round_trip_cost_rate": "FLOAT NOT NULL DEFAULT 0.0052",
-            "required_gross_return": "FLOAT NOT NULL DEFAULT 0.0057",
+            "estimated_round_trip_cost_rate": "FLOAT NOT NULL DEFAULT 0.0022",
+            "required_gross_return": "FLOAT NOT NULL DEFAULT 0.0027",
             "active_stop_loss_price": "FLOAT",
             "active_take_profit_price": "FLOAT",
             "active_trailing_stop_price": "FLOAT",
             "execution_reference_price": "FLOAT",
         },
         "strategy_simulated_trades": {
+            "selected_strategy_code": "VARCHAR(64)",
             "is_recovered": "BOOLEAN NOT NULL DEFAULT 0",
             "recovery_note": "TEXT",
         },
         "simulated_trades": {
             "order_role": "VARCHAR(16) NOT NULL DEFAULT 'TAKER'",
-            "fee_rate": "FLOAT NOT NULL DEFAULT 0.002",
+            "fee_rate": "FLOAT NOT NULL DEFAULT 0.0005",
             "spread_rate": "FLOAT NOT NULL DEFAULT 0.0002",
             "spread_cost": "FLOAT NOT NULL DEFAULT 0",
             "slippage_rate": "FLOAT NOT NULL DEFAULT 0.0005",
@@ -184,6 +200,48 @@ def _migrate_additive_columns() -> None:
             for column, ddl in columns.items():
                 if column not in current:
                     connection.exec_driver_sql(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {ddl}')
+
+
+def _migrate_active_coinex_experiments_to_mexc() -> None:
+    """Move only unfinished v0.12 experiments to the v0.13 MEXC cost model.
+
+    Completed experiments keep their original fee metadata and realized accounting.
+    An unfinished paper experiment continues from its persisted portfolio, but every
+    execution after the upgrade uses the configured MEXC API Spot assumptions.
+    """
+
+    with engine.begin() as connection:
+        exists = connection.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='experiments'")
+        ).scalar()
+        if not exists:
+            return
+
+        connection.execute(
+            text(
+                """
+                UPDATE experiments
+                   SET vip_level = :vip_level,
+                       maker_fee_rate = :maker_fee_rate,
+                       taker_fee_rate = :taker_fee_rate,
+                       fee_source = :fee_source,
+                       min_market_amount = NULL
+                 WHERE status IN ('PENDING', 'RUNNING', 'STOP_REQUESTED')
+                   AND (
+                        vip_level = 'VIP0'
+                        OR fee_source LIKE 'CONFIG_VIP0%'
+                        OR fee_source LIKE '%CET%'
+                   )
+                """
+            ),
+            {
+                "vip_level": settings.vip_level,
+                "maker_fee_rate": settings.effective_default_maker_fee_rate,
+                "taker_fee_rate": settings.effective_default_taker_fee_rate,
+                "fee_source": "MEXC_API_CONFIG"
+                + ("_MX_DISCOUNT" if settings.mx_fee_discount_enabled else ""),
+            },
+        )
 
 
 def get_session() -> Generator[Session, None, None]:

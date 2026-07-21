@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 import logging
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -12,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from .ai_pattern_trader import AIPatternTrader
 from .ai_history_service import AIHistoryService
-from .coinex_client import CoinExPublicClient, TIMEFRAME_SECONDS
+from .mexc_client import MEXCPublicClient, TIMEFRAME_SECONDS
 from .config import Settings, get_settings
 from .database import SessionLocal
 from .execution_costs import ExecutionCosts
@@ -28,20 +30,28 @@ from .models import (
 )
 from .multi_broker import MultiStrategyPaperBroker
 from .multi_strategy import (
+    AdaptiveStrategySelector,
     Ema9Setup91Strategy,
     EmaCrossoverCostAwareStrategy,
+    EmaPullbackStrategy,
     HybridComparisonStrategy,
+    LarryVolatilityBreakoutStrategy,
+    StrategyDecision,
 )
 from .strategy_codes import (
     ACTIVE_STRATEGY_CODES,
+    ADAPTIVE_STRATEGY_SELECTOR,
     AI_PATTERN_TRADER,
     CURRENT_HYBRID,
     DIRECT_ENTRY_STRATEGY_CODES,
     DYNAMIC_RISK_STRATEGY_CODES,
     EMA_CROSSOVER_COST_AWARE,
+    EMA_PULLBACK,
     EMA9_CLASSIC_STRATEGY_CODES,
     EMA9_STRATEGY_CODES,
+    LARRY_VOLATILITY_BREAKOUT,
     LARRY_WILLIAMS_91_TREND_FOLLOWER,
+    SELECTOR_CANDIDATE_CODES,
     STRATEGY_DISPLAY_NAMES,
 )
 from .trading_profiles import (
@@ -60,9 +70,12 @@ class TraderWorker:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.client = CoinExPublicClient(settings)
+        self.client = MEXCPublicClient(settings)
         self.hybrid_strategy = HybridComparisonStrategy()
         self.ema_crossover_strategy = EmaCrossoverCostAwareStrategy()
+        self.ema_pullback_strategy = EmaPullbackStrategy(settings)
+        self.larry_volatility_strategy = LarryVolatilityBreakoutStrategy(settings)
+        self.adaptive_selector = AdaptiveStrategySelector(settings)
         self.ema9_classic_strategy = Ema9Setup91Strategy(
             settings=settings, cost_aware=False, mode=Ema9Setup91Strategy.CLASSIC
         )
@@ -103,6 +116,13 @@ class TraderWorker:
 
     def wake(self) -> None:
         self._wake_event.set()
+
+    @asynccontextmanager
+    async def exclusive_processing(self) -> AsyncIterator[None]:
+        """Serialize administrative mutations with the live worker cycle."""
+
+        async with self._processing_lock:
+            yield
 
     async def _run_loop(self) -> None:
         logger.info(
@@ -526,7 +546,6 @@ class TraderWorker:
         atr = float(execution_row["atr_14"])
         profile = get_trading_profile(experiment.trading_profile)
 
-        # The ML target is pure next-candle direction. Costs remain informational only.
         model = XGBoostDirectionModel(
             required_gross_return=0.0,
             buy_threshold=profile.buy_probability_threshold,
@@ -544,6 +563,7 @@ class TraderWorker:
         recovered_trade_count = 0
         recovered_action_accounts: set[int] = set()
         accounts = self._strategy_accounts(session, experiment.id)
+        accounts_by_code = {account.strategy_code: account for account in accounts}
         self._resolve_ai_pattern_outcomes(
             session=session,
             experiment=experiment,
@@ -551,7 +571,6 @@ class TraderWorker:
             current_index=current_index,
         )
 
-        # Replay intrabar stop/target and EMA9 breakout events using the missed candle OHLC.
         if is_recovered:
             for account in accounts:
                 if account.has_open_position:
@@ -607,7 +626,7 @@ class TraderWorker:
                         is_recovered=True,
                         recovery_note=(
                             "Entry reconstructed at the setup trigger/open gap. Intrabar order "
-                            "cannot be known exactly from hourly OHLC."
+                            "cannot be known exactly from closed OHLC data."
                         ),
                     )
                     account.last_setup_event = "RECOVERED_BREAKOUT_ENTRY"
@@ -622,7 +641,12 @@ class TraderWorker:
                         "A missed Setup 9.1 breakout was reconstructed as a paper trade.",
                     )
 
+        # Evaluate all specialist candidates first. The selector receives the same
+        # chronologically valid closed candle and cannot see future data.
+        decisions: dict[str, StrategyDecision] = {}
         for account in accounts:
+            if account.strategy_code == ADAPTIVE_STRATEGY_SELECTOR:
+                continue
             account.last_atr_14 = atr
             if account.strategy_code in DYNAMIC_RISK_STRATEGY_CODES and account.has_open_position:
                 self.broker.update_dynamic_risk_levels(
@@ -632,8 +656,6 @@ class TraderWorker:
                     costs=costs,
                     profile=profile,
                 )
-
-            position_before = "LONG" if account.has_open_position else "FLAT"
             if account.strategy_code == CURRENT_HYBRID:
                 decision = self.hybrid_strategy.decide(
                     account=account,
@@ -649,6 +671,26 @@ class TraderWorker:
                     account=account,
                     current_row=execution_row,
                     previous_row=previous_row,
+                    trend_row=trend_row,
+                    costs=costs,
+                    profile=profile,
+                )
+            elif account.strategy_code == EMA_PULLBACK:
+                decision = self.ema_pullback_strategy.decide(
+                    account=account,
+                    current_row=execution_row,
+                    previous_row=previous_row,
+                    trend_row=trend_row,
+                    costs=costs,
+                    profile=profile,
+                )
+            elif account.strategy_code == LARRY_VOLATILITY_BREAKOUT:
+                lookback_start = max(0, current_index - self.settings.larry_breakout_lookback)
+                previous_window = execution_indicators.iloc[lookback_start:current_index]
+                decision = self.larry_volatility_strategy.decide(
+                    account=account,
+                    current_row=execution_row,
+                    previous_window=previous_window,
                     trend_row=trend_row,
                     costs=costs,
                     profile=profile,
@@ -678,7 +720,47 @@ class TraderWorker:
                     profile=profile,
                     now=candle_timestamp,
                 )
+            decisions[account.strategy_code] = decision
 
+        selector_account = accounts_by_code.get(ADAPTIVE_STRATEGY_SELECTOR)
+        if selector_account is not None:
+            selector_account.last_atr_14 = atr
+            if selector_account.has_open_position:
+                self.broker.update_dynamic_risk_levels(
+                    account=selector_account,
+                    market_high=float(execution_row["high"]),
+                    atr=atr,
+                    costs=costs,
+                    profile=profile,
+                )
+            selector_candidates = {
+                code: decisions[code]
+                for code in SELECTOR_CANDIDATE_CODES
+                if code in decisions
+            }
+            selector_decision = self.adaptive_selector.decide(
+                account=selector_account,
+                current_row=execution_row,
+                trend_row=trend_row,
+                costs=costs,
+                candidates=selector_candidates,
+            )
+            selector_account.selector_selected_strategy = (
+                selector_decision.selector_selected_strategy
+                or selector_account.selector_selected_strategy
+            )
+            selector_account.selector_market_regime = selector_decision.selector_market_regime
+            selector_account.selector_confidence = selector_decision.selector_confidence
+            selector_account.selector_expected_net_return = (
+                selector_decision.selector_expected_net_return
+            )
+            selector_account.selector_candidate_scores = selector_decision.selector_candidate_scores
+            selector_account.selector_model_version = selector_decision.selector_model_version
+            decisions[ADAPTIVE_STRATEGY_SELECTOR] = selector_decision
+
+        for account in accounts:
+            decision = decisions[account.strategy_code]
+            position_before = "LONG" if account.has_open_position else "FLAT"
             snapshot = self._build_decision_snapshot(
                 experiment=experiment,
                 account=account,
@@ -771,8 +853,6 @@ class TraderWorker:
                     else:
                         status_message = "The strategy authorized a simulated sale."
 
-            # Preserve a reconstructed intrabar event instead of hiding it behind a HOLD
-            # decision generated at the candle close.
             if account.id in recovered_action_accounts and account.strategy_code in events:
                 event_type, status_message = events[account.strategy_code]
             events[account.strategy_code] = (event_type, status_message)
@@ -1025,6 +1105,12 @@ class TraderWorker:
             ai_risk_reason=decision.ai_risk_reason,
             ai_horizon_candles=decision.ai_horizon_candles,
             ai_feature_summary=decision.ai_feature_summary,
+            selector_selected_strategy=decision.selector_selected_strategy,
+            selector_market_regime=decision.selector_market_regime,
+            selector_confidence=decision.selector_confidence,
+            selector_expected_net_return=decision.selector_expected_net_return,
+            selector_candidate_scores=decision.selector_candidate_scores,
+            selector_model_version=decision.selector_model_version,
             technical_signal=decision.technical_signal,
             model_signal=decision.model_signal,
             final_signal=decision.final_signal,
@@ -1115,20 +1201,20 @@ class TraderWorker:
             try:
                 rules = await self.client.get_market_rules(experiment.market)
                 discount_factor = (
-                    1 - self.settings.cet_fee_discount_pct
-                    if self.settings.cet_fee_discount_enabled
+                    1 - self.settings.mx_fee_discount_pct
+                    if self.settings.mx_fee_discount_enabled
                     else 1.0
                 )
                 experiment.maker_fee_rate = rules.maker_fee_rate * discount_factor
                 experiment.taker_fee_rate = rules.taker_fee_rate * discount_factor
                 experiment.fee_source = rules.source + (
-                    "_CET_DISCOUNT" if self.settings.cet_fee_discount_enabled else "_VIP0"
+                    "_MX_DISCOUNT" if self.settings.mx_fee_discount_enabled else "_API_SPOT"
                 )
                 experiment.min_market_amount = rules.min_amount
                 experiment.base_currency = rules.base_currency
                 experiment.quote_currency = rules.quote_currency
             except Exception:
-                logger.exception("Could not refresh public market rules; using VIP0 config")
+                logger.exception("Could not refresh public MEXC market rules; using API Spot config")
 
         spread_rate = self.settings.fallback_spread_rate
         try:
@@ -1512,6 +1598,8 @@ def ensure_strategy_accounts(
                 if code in EMA9_CLASSIC_STRATEGY_CODES
                 else "AI_DYNAMIC"
                 if code == AI_PATTERN_TRADER
+                else "SELECTOR_DYNAMIC"
+                if code == ADAPTIVE_STRATEGY_SELECTOR
                 else "N/A"
             )
             if code == AI_PATTERN_TRADER:
@@ -1566,6 +1654,8 @@ def ensure_strategy_accounts(
                 if code in EMA9_CLASSIC_STRATEGY_CODES
                 else "AI_DYNAMIC"
                 if code == AI_PATTERN_TRADER
+                else "SELECTOR_DYNAMIC"
+                if code == ADAPTIVE_STRATEGY_SELECTOR
                 else "N/A"
             ),
             ai_mode=(get_settings().ai_pattern_mode if code == AI_PATTERN_TRADER else None),
@@ -1575,6 +1665,14 @@ def ensure_strategy_accounts(
                 "Waiting for the first autonomous pattern analysis."
                 if code == AI_PATTERN_TRADER
                 else None
+            ),
+            selector_model_version=(
+                get_settings().selector_model_version
+                if code == ADAPTIVE_STRATEGY_SELECTOR
+                else None
+            ),
+            selector_market_regime=(
+                "UNDEFINED" if code == ADAPTIVE_STRATEGY_SELECTOR else None
             ),
         )
         session.add(account)
@@ -1613,7 +1711,7 @@ def create_experiment_record(
         vip_level=cfg.vip_level,
         maker_fee_rate=cfg.effective_default_maker_fee_rate,
         taker_fee_rate=cfg.effective_default_taker_fee_rate,
-        fee_source="CONFIG_VIP0" + ("_CET_DISCOUNT" if cfg.cet_fee_discount_enabled else ""),
+        fee_source="MEXC_API_CONFIG" + ("_MX_DISCOUNT" if cfg.mx_fee_discount_enabled else ""),
         last_spread_rate=cfg.fallback_spread_rate,
         average_spread_rate=0.0,
         spread_observations=0,
@@ -1624,8 +1722,10 @@ def create_experiment_record(
         max_equity=initial_capital,
         max_drawdown_pct=0.0,
         consecutive_losses=0,
-        model_name="Signal-first XGBoost + EMA crossover + Larry Williams 9.1 Classic/Trend",
-        model_version="4.1",
+        model_name=(
+            "Adaptive selector + XGBoost + EMA crossover/pullback + Larry Williams intraday"
+        ),
+        model_version="5.0",
         recovery_status="IDLE",
         recovered_candle_count=0,
         recovered_trade_count=0,

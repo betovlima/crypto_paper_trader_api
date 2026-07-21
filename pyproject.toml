@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "crypto-paper-trader"
-version = "0.12.0"
+version = "0.13.3"
 description = "A PAPER_ONLY crypto strategy research application with FastAPI, SQLite, autonomous pattern learning, EMA 9 and XGBoost."
 authors = ["Roberto"]
 readme = "README.md"

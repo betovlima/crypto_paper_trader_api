@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime
+import math
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -237,3 +240,111 @@ def list_strategy_market_snapshots(
         )
     )
     return [row.to_dict() for row in rows]
+
+
+
+def list_strategy_trade_history(
+    session: Session,
+    experiment_id: str,
+    strategy_code: str,
+    page: int,
+    page_size: int,
+    side: str | None = None,
+    result: str | None = None,
+    recovered: bool | None = None,
+    selected_strategy_code: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    sort_direction: str = "desc",
+) -> dict:
+    get_experiment_or_404(session, experiment_id)
+    filters = [
+        StrategySimulatedTrade.experiment_id == experiment_id,
+        StrategySimulatedTrade.strategy_code == strategy_code,
+    ]
+    if side:
+        filters.append(StrategySimulatedTrade.side == side.strip().upper())
+    normalized_result = (result or "").strip().upper()
+    if normalized_result == "PROFIT":
+        filters.extend(
+            [
+                StrategySimulatedTrade.side == "SELL",
+                StrategySimulatedTrade.realized_pnl > 0,
+            ]
+        )
+    elif normalized_result == "LOSS":
+        filters.extend(
+            [
+                StrategySimulatedTrade.side == "SELL",
+                StrategySimulatedTrade.realized_pnl < 0,
+            ]
+        )
+    elif normalized_result in {"BREAK_EVEN", "BREAKEVEN"}:
+        filters.extend(
+            [
+                StrategySimulatedTrade.side == "SELL",
+                StrategySimulatedTrade.realized_pnl == 0,
+            ]
+        )
+    if recovered is not None:
+        filters.append(StrategySimulatedTrade.is_recovered.is_(recovered))
+    if selected_strategy_code:
+        filters.append(
+            StrategySimulatedTrade.selected_strategy_code
+            == selected_strategy_code.strip().upper()
+        )
+    if start_date:
+        filters.append(StrategySimulatedTrade.executed_at >= start_date)
+    if end_date:
+        filters.append(StrategySimulatedTrade.executed_at <= end_date)
+
+    total_items = int(
+        session.scalar(select(func.count(StrategySimulatedTrade.id)).where(*filters)) or 0
+    )
+    order_column = (
+        StrategySimulatedTrade.executed_at.asc()
+        if sort_direction.strip().lower() == "asc"
+        else StrategySimulatedTrade.executed_at.desc()
+    )
+    rows = list(
+        session.scalars(
+            select(StrategySimulatedTrade)
+            .where(*filters)
+            .order_by(order_column)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    )
+    # Summary is calculated over the complete filtered set, not only the current page.
+    summary_rows = list(
+        session.scalars(select(StrategySimulatedTrade).where(*filters))
+    )
+    exits = [row for row in summary_rows if row.side == "SELL" and row.realized_pnl is not None]
+    profitable = sum(1 for row in exits if float(row.realized_pnl or 0.0) > 0)
+    losing = sum(1 for row in exits if float(row.realized_pnl or 0.0) < 0)
+    break_even = len(exits) - profitable - losing
+    total_pages = math.ceil(total_items / page_size) if total_items else 0
+    return {
+        "items": [row.to_dict() for row in rows],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total_items": total_items,
+            "total_pages": total_pages,
+            "has_previous": page > 1,
+            "has_next": page < total_pages,
+        },
+        "summary": {
+            "total_trades": total_items,
+            "buy_count": sum(1 for row in summary_rows if row.side == "BUY"),
+            "sell_count": len(exits),
+            "profitable_exits": profitable,
+            "losing_exits": losing,
+            "break_even_exits": break_even,
+            "total_transaction_cost": sum(
+                float(row.total_transaction_cost or 0.0) for row in summary_rows
+            ),
+            "total_realized_pnl": sum(float(row.realized_pnl or 0.0) for row in exits),
+            "win_rate": profitable / len(exits) if exits else None,
+        },
+    }
