@@ -51,11 +51,17 @@ class MEXCPublicClient:
         self._client = httpx.AsyncClient(
             base_url=settings.mexc_base_url.rstrip("/"),
             timeout=settings.http_timeout_seconds,
-            headers={"User-Agent": "crypto-paper-trader/0.13.3"},
+            headers={"User-Agent": "crypto-paper-trader/0.15.0"},
         )
 
     async def close(self) -> None:
         await self._client.aclose()
+
+    async def get_24h_tickers(self) -> list[dict[str, Any]]:
+        payload = await self._get_json("/api/v3/ticker/24hr", {})
+        if not isinstance(payload, list):
+            raise MEXCAPIError("MEXC returned no 24-hour ticker collection.")
+        return [row for row in payload if isinstance(row, dict)]
 
     async def get_ticker(self, market: str) -> dict[str, Any]:
         payload = await self._get_json("/api/v3/ticker/price", {"symbol": market})
@@ -147,10 +153,83 @@ class MEXCPublicClient:
         start_time_ms: int | None = None,
         end_time_ms: int | None = None,
     ) -> pd.DataFrame:
+        """Return up to ``limit`` candles, transparently paging MEXC batches.
+
+        The MEXC Spot endpoint accepts at most 1,000 candles per request. The
+        application may need a longer history for adaptive AI training, so this
+        method walks backwards in time and merges as many batches as necessary.
+        """
         if period not in MEXC_INTERVALS:
             raise ValueError(f"Unsupported MEXC timeframe: {period}")
+        if not 1 <= limit <= 50_000:
+            raise ValueError("limit must be between 1 and 50000")
+
+        remaining = limit
+        cursor_end_ms = end_time_ms
+        frames: list[pd.DataFrame] = []
+        oldest_seen_ms: int | None = None
+
+        while remaining > 0:
+            batch_limit = min(1000, remaining)
+            batch = await self._get_candle_batch(
+                market=market,
+                period=period,
+                limit=batch_limit,
+                closed_only=closed_only,
+                start_time_ms=start_time_ms,
+                end_time_ms=cursor_end_ms,
+            )
+
+            if batch.empty:
+                break
+
+            frames.append(batch)
+            merged = (
+                pd.concat(frames, ignore_index=True)
+                .sort_values("timestamp")
+                .drop_duplicates(subset=["timestamp"], keep="last")
+            )
+            merged.reset_index(drop=True, inplace=True)
+
+            oldest_timestamp = pd.Timestamp(batch["timestamp"].min())
+            oldest_ms = int(oldest_timestamp.timestamp() * 1000)
+
+            if oldest_seen_ms is not None and oldest_ms >= oldest_seen_ms:
+                break
+
+            oldest_seen_ms = oldest_ms
+            cursor_end_ms = oldest_ms - 1
+            remaining = limit - len(merged)
+
+            if start_time_ms is not None and cursor_end_ms < start_time_ms:
+                break
+            if len(batch) < batch_limit:
+                break
+
+        if not frames:
+            raise MEXCAPIError(f"MEXC returned no candles for {market} ({period}).")
+
+        result = (
+            pd.concat(frames, ignore_index=True)
+            .sort_values("timestamp")
+            .drop_duplicates(subset=["timestamp"], keep="last")
+            .tail(limit)
+        )
+        result.reset_index(drop=True, inplace=True)
+        return result
+
+    async def _get_candle_batch(
+        self,
+        *,
+        market: str,
+        period: str,
+        limit: int,
+        closed_only: bool,
+        start_time_ms: int | None,
+        end_time_ms: int | None,
+    ) -> pd.DataFrame:
         if not 1 <= limit <= 1000:
-            raise ValueError("limit must be between 1 and 1000")
+            raise ValueError("MEXC candle batch limit must be between 1 and 1000")
 
         params: dict[str, Any] = {
             "symbol": market,

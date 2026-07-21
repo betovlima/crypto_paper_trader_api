@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ...runtime import settings, worker
+from ...runtime import ai_scanner, settings, worker
 from ...schemas import HealthResponse, PublicConfiguration
 from ...strategy_codes import (
     ACTIVE_STRATEGY_CODES,
@@ -22,6 +22,7 @@ def health() -> HealthResponse:
         data_dir=str(settings.resolved_data_dir),
         database_exists=database_path.exists(),
         worker_running=worker.is_running,
+        ai_scanner_running=ai_scanner.is_running,
         persistent_storage_configured=settings.persistent_storage_configured,
         storage_warning=settings.storage_warning,
     )
@@ -76,9 +77,29 @@ def public_configuration() -> PublicConfiguration:
         ai_pattern_min_expected_net_return=settings.ai_pattern_min_expected_net_return,
         ai_pattern_min_confidence=settings.ai_pattern_min_confidence,
         ai_pattern_max_spread_rate=settings.ai_pattern_max_spread_rate,
-        ai_pattern_model_version="AI-PATTERN-v1",
+        ai_pattern_model_version="AI-PATTERN-v2-LONG-HISTORY",
+        ai_scanner_enabled=settings.ai_scanner_enabled,
+        ai_scanner_interval_seconds=settings.ai_scanner_interval_seconds,
+        ai_scanner_universe_size=settings.ai_scanner_universe_size,
+        ai_scanner_result_limit=settings.ai_scanner_result_limit,
+        ai_scanner_execution_timeframe=settings.ai_scanner_execution_timeframe,
+        ai_scanner_trend_timeframe=settings.ai_scanner_trend_timeframe,
         selector_min_confidence=settings.selector_min_confidence,
         selector_min_expected_net_return=settings.selector_min_expected_net_return,
         selector_min_reward_risk_ratio=settings.selector_min_reward_risk_ratio,
         selector_model_version=settings.selector_model_version,
+        adaptive_research_web_enabled=settings.adaptive_research_web_enabled,
+        adaptive_research_openai_model=settings.adaptive_research_openai_model,
+        adaptive_research_ai_review_enabled=settings.adaptive_research_ai_review_enabled,
+        adaptive_research_openai_review_model=settings.adaptive_research_openai_review_model,
+        adaptive_research_interval_hours=settings.adaptive_research_interval_hours,
+        adaptive_research_retry_minutes=settings.adaptive_research_retry_minutes,
+        adaptive_research_min_candles=settings.adaptive_research_min_candles,
+        adaptive_research_validation_rows=settings.adaptive_research_validation_rows,
+        adaptive_research_walk_forward_folds=settings.adaptive_research_walk_forward_folds,
+        adaptive_research_min_trades=settings.adaptive_research_min_trades,
+        adaptive_research_min_profit_factor=settings.adaptive_research_min_profit_factor,
+        adaptive_research_max_drawdown_pct=settings.adaptive_research_max_drawdown_pct,
+        adaptive_research_min_stability=settings.adaptive_research_min_stability,
+        adaptive_research_min_validation_score=settings.adaptive_research_min_validation_score,
     )

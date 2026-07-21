@@ -177,6 +177,15 @@ class MultiStrategyPaperBroker:
         account.total_fees += fee
         account.total_spread_cost += spread_cost
         account.total_slippage_cost += slippage_cost
+        if account.strategy_code == ADAPTIVE_STRATEGY_SELECTOR:
+            account.selector_position_strategy_code = account.selector_selected_strategy
+            account.selector_position_strategy_name = (
+                account.selector_active_strategy_name or account.selector_selected_strategy
+            )
+            account.selector_position_strategy_origin = account.selector_strategy_origin
+            account.selector_position_strategy_spec_json = account.selector_strategy_spec_json
+            account.selector_position_validation_score = account.selector_validation_score
+            account.selector_position_opened_at = executed_at
         if account.strategy_code in EMA9_STRATEGY_CODES:
             account.setup_status = "IN_POSITION"
             account.exit_trigger_price = None
@@ -276,7 +285,7 @@ class MultiStrategyPaperBroker:
         take_profit_price = account.take_profit_price
         trailing_stop_price = account.trailing_stop_price
         selected_strategy_code = (
-            account.selector_selected_strategy
+            account.selector_position_strategy_code or account.selector_selected_strategy
             if account.strategy_code == ADAPTIVE_STRATEGY_SELECTOR
             else None
         )
@@ -369,6 +378,13 @@ class MultiStrategyPaperBroker:
         )
         session.add(trade)
         session.flush()
+        if account.strategy_code == ADAPTIVE_STRATEGY_SELECTOR:
+            account.selector_position_strategy_code = None
+            account.selector_position_strategy_name = None
+            account.selector_position_strategy_origin = None
+            account.selector_position_strategy_spec_json = None
+            account.selector_position_validation_score = None
+            account.selector_position_opened_at = None
         return trade
 
     @staticmethod

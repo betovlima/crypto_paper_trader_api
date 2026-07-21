@@ -15,7 +15,7 @@ from crypto_paper_trader_api.models import (
     StrategyDecisionSnapshot,
     StrategySimulatedTrade,
 )
-from crypto_paper_trader_api.strategy_codes import ACTIVE_STRATEGY_CODES, AI_PATTERN_TRADER
+from crypto_paper_trader_api.strategy_codes import ACTIVE_STRATEGY_CODES
 from crypto_paper_trader_api.worker import (
     TraderWorker,
     create_experiment_record,
@@ -93,9 +93,6 @@ def test_one_closed_candle_creates_all_strategy_decisions() -> None:
         assert {item.strategy_code for item in decisions} == set(ACTIVE_STRATEGY_CODES)
         ema9_rows = [item for item in decisions if item.strategy_code.startswith("EMA9")]
         assert all(item.ema_9 is not None for item in ema9_rows)
-        ai_row = next(item for item in decisions if item.strategy_code == AI_PATTERN_TRADER)
-        assert ai_row.ai_model_version == "AI-PATTERN-v2-LONG-HISTORY"
-        assert ai_row.ai_risk_status in {"LEARNING", "MONITORING", "APPROVED", "BLOCKED"}
 
 
 def test_downtime_recovery_replays_every_missing_closed_candle() -> None:

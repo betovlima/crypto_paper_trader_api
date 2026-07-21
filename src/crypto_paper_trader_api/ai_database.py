@@ -35,6 +35,7 @@ def set_ai_sqlite_pragmas(dbapi_connection: sqlite3.Connection, _record: object)
 
 def init_ai_database() -> None:
     from . import ai_models  # noqa: F401
+    from . import ai_opportunity_models  # noqa: F401
 
     AIBase.metadata.create_all(bind=ai_engine)
 

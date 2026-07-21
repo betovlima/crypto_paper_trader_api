@@ -1,78 +1,98 @@
-# Crypto Paper Trader API — v0.13.3
+# Crypto Paper Trader API — v0.15.1
 
-PAPER_ONLY FastAPI service for comparing Spot crypto strategies with public MEXC market data. The project contains no authenticated order, transfer, deposit or withdrawal implementation.
+PAPER_ONLY FastAPI service for crypto strategy research with public MEXC Spot market data. The project contains no authenticated order, transfer, deposit or withdrawal implementation.
 
-## Release 0.13.3
+## Adaptive Strategy Research Selector
 
-### Administrative reset
-
-A protected reset endpoint was added:
-
-```http
-POST /api/v1/admin/reset
-X-Admin-Key: <ADMIN_API_KEY>
-```
-
-The operation:
-
-- waits for the current worker cycle to finish;
-- deletes all experiments and their dependent strategy, trade, decision, candle and snapshot records;
-- preserves the separate AI market-history database;
-- wakes the worker after the reset;
-- rejects missing or invalid keys.
-
-Configure a long random secret only in the API service:
-
-```env
-ADMIN_API_KEY=replace-with-a-long-random-secret
-```
-
-Never expose this value through a `VITE_*` variable.
-
-## Release 0.13.1
-
-This patch normalizes all AI history candle timestamps to UTC before persistence, comparison and gap analysis. It fixes the Windows/SQLite runtime error `TypeError: Cannot compare tz-naive and tz-aware timestamps` without requiring a database reset.
-
-## Release 0.13.0
-
-This release migrated the public market-data provider from CoinEx to MEXC and added an explainable adaptive strategy layer.
-
-### Main capabilities
-
-- MEXC Spot public price, order-book, exchange-information and candlestick integration.
-- Balanced profile: `30min` decision candles with `1hour` trend confirmation.
-- Conservative profile: `1hour` decisions with `4hour` confirmation.
-- Fast profile: `15min` decisions with `1hour` confirmation.
-- EMA Pullback strategy.
-- Larry Volatility Breakout strategy.
-- Adaptive Strategy Selector that can choose a candidate strategy or remain on `HOLD`.
-- Post-exit selector reward and selected-strategy audit fields.
-- Additive SQLite migrations compatible with existing persistent databases.
-
-## Active strategy portfolios
-
-Each strategy receives the same closed candles and owns an independent paper portfolio:
-
-1. Adaptive Strategy Selector
-2. Profile-Aware Hybrid + ML
-3. EMA Crossover
-4. EMA Pullback
-5. Larry Williams 9.1 Classic
-6. Larry Williams 9.1 Trend Follower
-7. Larry Volatility Breakout
-8. AI Pattern Trader
-
-## Paper execution and costs
+The `ADAPTIVE_STRATEGY_SELECTOR` no longer chooses one of the fixed dashboard strategies. It now follows this process:
 
 ```text
-Public market data -> strategy signal -> paper broker -> accounting
+Market regime detection
+    -> strategy hypothesis research
+    -> executable rule generation
+    -> cost-adjusted backtest
+    -> chronological walk-forward validation
+    -> risk and stability gates
+    -> generated strategy activation or WAIT
 ```
 
-- Buys execute from the best ask; sells execute from the best bid.
-- Configurable slippage is applied after bid/ask selection.
-- The default MEXC API Spot assumption is `0.05%` taker per execution and `0%` maker.
-- Public promotional rates are not applied automatically when `USE_PUBLIC_MARKET_FEE_RATES=false`.
-- Spread, slippage and fees affect net accounting only; no exchange order is sent.
+The current generated strategy is persisted with:
+
+- detected regime;
+- strategy name, code, origin and executable JSON specification;
+- research summary and source URLs;
+- validation score;
+- net validated return;
+- maximum drawdown;
+- profit factor;
+- validated trade count;
+- next reassessment timestamp.
+
+An open paper position remains attached to the generated strategy that opened it. The selector researches a replacement only after the portfolio is flat.
+
+### Optional web research
+
+The API can use the OpenAI Responses API web-search tool to research systematic strategy hypotheses. Web content is never executed directly. Every hypothesis is converted into a constrained strategy family and must pass local backtesting, costs, walk-forward validation and risk gates.
+
+Configure only in the API service:
+
+```env
+ADAPTIVE_RESEARCH_WEB_ENABLED=true
+OPENAI_API_KEY=replace-with-your-server-side-key
+ADAPTIVE_RESEARCH_OPENAI_MODEL=gpt-5
+```
+
+Without `OPENAI_API_KEY`, the selector remains operational using the internal strategy research library and clearly records `SYSTEM_GENERATED` as the origin.
+
+Main research settings:
+
+```env
+SELECTOR_MODEL_VERSION=ADAPTIVE-RESEARCH-SELECTOR-v1
+ADAPTIVE_RESEARCH_INTERVAL_HOURS=12
+ADAPTIVE_RESEARCH_RETRY_MINUTES=30
+ADAPTIVE_RESEARCH_MIN_CANDLES=800
+ADAPTIVE_RESEARCH_VALIDATION_ROWS=240
+ADAPTIVE_RESEARCH_WALK_FORWARD_FOLDS=3
+ADAPTIVE_RESEARCH_MAX_CANDIDATES=8
+ADAPTIVE_RESEARCH_MIN_TRADES=20
+ADAPTIVE_RESEARCH_MIN_PROFIT_FACTOR=1.20
+ADAPTIVE_RESEARCH_MAX_DRAWDOWN_PCT=0.10
+ADAPTIVE_RESEARCH_MIN_STABILITY=0.67
+ADAPTIVE_RESEARCH_MIN_VALIDATION_SCORE=60
+```
+
+Supported generated strategy families:
+
+- `TREND_PULLBACK`
+- `DONCHIAN_BREAKOUT`
+- `VOLATILITY_BREAKOUT`
+- `MEAN_REVERSION`
+- `MOMENTUM_CONTINUATION`
+
+## Independent AI Opportunity Scanner
+
+The scanner is independent from experiments and continues running after `Stop experiment`.
+
+```http
+GET /api/v1/ai-opportunities/status
+GET /api/v1/ai-opportunities/latest?limit=5
+```
+
+It supports real progress states, long MEXC candle histories through pagination, adaptive training windows and error details.
+
+## Protected experiment stopping
+
+```http
+POST /api/v1/experiments/stop-running
+Content-Type: application/json
+X-Admin-Key: <ADMIN_API_KEY>
+
+{
+  "close_open_positions": true
+}
+```
+
+The endpoint targets the latest `RUNNING` experiment, preserves all records and does not stop the AI Opportunity Scanner.
 
 ## Local execution
 
@@ -88,34 +108,17 @@ API documentation:
 http://localhost:8000/docs
 ```
 
-Run tests:
+Tests:
 
 ```powershell
 poetry run pytest
 ```
 
-## Configuration
+## Railway
 
-Copy `.env.example` to `.env`. Important defaults:
+Attach a persistent volume to the API service, preferably at `/data`. Railway supplies `RAILWAY_VOLUME_MOUNT_PATH` automatically.
 
-```env
-MEXC_BASE_URL=https://api.mexc.com
-DEFAULT_EXECUTION_TIMEFRAME=30min
-DEFAULT_TREND_TIMEFRAME=1hour
-TAKER_FEE_RATE=0.0005
-SLIPPAGE_RATE=0.0005
-SELECTOR_MIN_CONFIDENCE=0.60
-SELECTOR_MIN_EXPECTED_NET_RETURN=0.0030
-ADMIN_API_KEY=replace-with-a-long-random-secret
-```
-
-## Persistence and Railway
-
-Attach a persistent Railway Volume to the API service, preferably at `/data`. The application prioritizes `RAILWAY_VOLUME_MOUNT_PATH` when Railway provides it.
-
-The main database stores experiments, portfolios, decisions, trades and selector audit data. The separate AI database stores the long-history AI Pattern Trader candles and sync state. The administrative reset clears only the main paper-trading data and intentionally preserves AI history.
-
-Recommended production settings:
+Minimum production settings:
 
 ```env
 APP_ENV=production
@@ -123,10 +126,25 @@ CORS_ORIGINS=https://your-frontend-domain
 ADMIN_API_KEY=replace-with-a-long-random-secret
 ```
 
-## Recovery policy
+For real web-assisted research, also set:
 
-After a restart, every missing closed decision candle is replayed chronologically. Recovered actions remain simulated and are marked in the database. The worker never converts a missed historical signal into an authenticated or late live order.
+```env
+ADAPTIVE_RESEARCH_WEB_ENABLED=true
+OPENAI_API_KEY=replace-with-your-server-side-key
+ADAPTIVE_RESEARCH_OPENAI_MODEL=gpt-5
+```
+
+Never put `ADMIN_API_KEY` or `OPENAI_API_KEY` in the frontend or in any `VITE_*` variable.
 
 ## Safety boundary
 
-The code uses only public MEXC market-data endpoints. It has no API-key fields and no authenticated trading, transfer or withdrawal client methods. All portfolios and executions are simulated.
+All executions are simulated. Public MEXC data is used for analysis, and the adaptive researcher cannot submit exchange orders.
+
+
+## 0.15.1 - Hybrid OpenAI research and local quantitative validation
+
+- Uses strict Structured Outputs for web-researched strategy specifications.
+- Adds an optional OpenAI suitability review only after local candidates pass all deterministic gates.
+- Keeps local backtests, walk-forward validation, transaction costs, drawdown and trade-count rules authoritative.
+- Exposes the AI provider, model, review status, review score and review explanation to the frontend.
+- Sends `store=false` in OpenAI Responses API requests.
