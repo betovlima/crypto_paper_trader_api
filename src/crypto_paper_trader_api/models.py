@@ -78,10 +78,10 @@ class Experiment(Base):
     take_profit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     trailing_stop_price: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    vip_level: Mapped[str] = mapped_column(String(16), default="VIP0")
-    maker_fee_rate: Mapped[float] = mapped_column(Float, default=0.002)
-    taker_fee_rate: Mapped[float] = mapped_column(Float, default=0.002)
-    fee_source: Mapped[str] = mapped_column(String(64), default="CONFIG_VIP0")
+    vip_level: Mapped[str] = mapped_column(String(16), default="API_SPOT")
+    maker_fee_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    taker_fee_rate: Mapped[float] = mapped_column(Float, default=0.0005)
+    fee_source: Mapped[str] = mapped_column(String(64), default="MEXC_API_CONFIG")
     min_market_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     base_currency: Mapped[str | None] = mapped_column(String(16), nullable=True)
     quote_currency: Mapped[str | None] = mapped_column(String(16), nullable=True)
@@ -475,6 +475,18 @@ class StrategyAccount(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # Adaptive Strategy Selector diagnostics and post-exit reward.
+    selector_selected_strategy: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    selector_market_regime: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    selector_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_expected_net_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_candidate_scores: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selector_model_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    selector_last_reward: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_last_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     @property
     def has_open_position(self) -> bool:
         return float(self.asset_quantity or 0.0) > 0
@@ -567,6 +579,14 @@ class StrategyAccount(Base):
             "ai_risk_status": self.ai_risk_status,
             "ai_risk_reason": self.ai_risk_reason,
             "ai_last_prediction_at": self.ai_last_prediction_at,
+            "selector_selected_strategy": self.selector_selected_strategy,
+            "selector_market_regime": self.selector_market_regime,
+            "selector_confidence": self.selector_confidence,
+            "selector_expected_net_return": self.selector_expected_net_return,
+            "selector_candidate_scores": self.selector_candidate_scores,
+            "selector_model_version": self.selector_model_version,
+            "selector_last_reward": self.selector_last_reward,
+            "selector_last_completed_at": self.selector_last_completed_at,
         }
 
 
@@ -675,6 +695,14 @@ class StrategyDecisionSnapshot(Base):
     ai_horizon_candles: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ai_feature_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Adaptive Strategy Selector audit fields.
+    selector_selected_strategy: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    selector_market_regime: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    selector_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_expected_net_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    selector_candidate_scores: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selector_model_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     # Delayed chronological reward evaluation. A prediction is resolved only after
     # its configured future candle becomes available.
     ai_outcome_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -719,6 +747,7 @@ class StrategySimulatedTrade(Base):
         ForeignKey("strategy_accounts.id", ondelete="CASCADE")
     )
     strategy_code: Mapped[str] = mapped_column(String(64))
+    selected_strategy_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     decision_id: Mapped[int | None] = mapped_column(
         ForeignKey("strategy_decision_snapshots.id", ondelete="SET NULL"), nullable=True
     )

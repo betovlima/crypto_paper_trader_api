@@ -72,7 +72,7 @@ class PaperBroker:
         quantity = available_budget / (execution_price * (1 + costs.taker_fee_rate))
         if experiment.min_market_amount and quantity < experiment.min_market_amount:
             raise ValueError(
-                f"Simulated quantity {quantity:.12f} is below CoinEx minimum "
+                f"Simulated quantity {quantity:.12f} is below MEXC minimum "
                 f"{experiment.min_market_amount:.12f}."
             )
 

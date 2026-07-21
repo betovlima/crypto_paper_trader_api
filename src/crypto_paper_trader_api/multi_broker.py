@@ -13,9 +13,8 @@ from .models import (
     StrategySimulatedTrade,
 )
 from .strategy_codes import (
-    AI_PATTERN_TRADER,
-    CURRENT_HYBRID,
-    EMA_CROSSOVER,
+    ADAPTIVE_STRATEGY_SELECTOR,
+    DYNAMIC_RISK_STRATEGY_CODES,
     EMA9_STRATEGY_CODES,
 )
 from .trading_profiles import TradingProfile
@@ -43,7 +42,7 @@ class MultiStrategyPaperBroker:
         del costs  # Costs are accounting-only and must not alter technical risk levels.
         if not account.has_open_position:
             return
-        if account.strategy_code not in {CURRENT_HYBRID, EMA_CROSSOVER, AI_PATTERN_TRADER}:
+        if account.strategy_code not in DYNAMIC_RISK_STRATEGY_CODES:
             return
 
         entry = float(account.entry_execution_price or account.average_entry_price or 0.0)
@@ -141,7 +140,7 @@ class MultiStrategyPaperBroker:
 
         if take_profit_override is not None:
             take_profit_price = float(take_profit_override)
-        elif account.strategy_code in {CURRENT_HYBRID, EMA_CROSSOVER, AI_PATTERN_TRADER}:
+        elif account.strategy_code in DYNAMIC_RISK_STRATEGY_CODES:
             reward_risk_ratio = (
                 active_profile.reward_risk_ratio
                 if active_profile
@@ -191,6 +190,11 @@ class MultiStrategyPaperBroker:
             experiment_id=experiment.id,
             strategy_account_id=account.id,
             strategy_code=account.strategy_code,
+            selected_strategy_code=(
+                account.selector_selected_strategy
+                if account.strategy_code == ADAPTIVE_STRATEGY_SELECTOR
+                else None
+            ),
             decision_id=decision_id,
             executed_at=executed_at,
             side="BUY",
@@ -271,6 +275,11 @@ class MultiStrategyPaperBroker:
         stop_loss_price = account.stop_loss_price
         take_profit_price = account.take_profit_price
         trailing_stop_price = account.trailing_stop_price
+        selected_strategy_code = (
+            account.selector_selected_strategy
+            if account.strategy_code == ADAPTIVE_STRATEGY_SELECTOR
+            else None
+        )
 
         account.cash_balance += net_proceeds
         account.asset_quantity = 0.0
@@ -278,6 +287,11 @@ class MultiStrategyPaperBroker:
         account.total_fees += fee
         account.total_spread_cost += spread_cost
         account.total_slippage_cost += slippage_cost
+        if account.strategy_code == ADAPTIVE_STRATEGY_SELECTOR:
+            account.selector_last_reward = (
+                realized_pnl / account.initial_capital if account.initial_capital > 0 else 0.0
+            )
+            account.selector_last_completed_at = executed_at
 
         if realized_pnl < 0:
             account.consecutive_losses += 1
@@ -325,6 +339,7 @@ class MultiStrategyPaperBroker:
             experiment_id=experiment.id,
             strategy_account_id=account.id,
             strategy_code=account.strategy_code,
+            selected_strategy_code=selected_strategy_code,
             decision_id=decision_id,
             executed_at=executed_at,
             side="SELL",

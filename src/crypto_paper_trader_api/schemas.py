@@ -10,16 +10,13 @@ from .trading_profiles import DEFAULT_TRADING_PROFILE, TRADING_PROFILES
 
 SUPPORTED_TIMEFRAMES = {
     "1min",
-    "3min",
     "5min",
     "15min",
     "30min",
     "1hour",
-    "2hour",
     "4hour",
-    "6hour",
-    "12hour",
     "1day",
+    "1week",
 }
 
 
@@ -28,8 +25,8 @@ class ExperimentCreate(BaseModel):
     duration_hours: float = Field(default=24.0, gt=0, le=168)
     initial_capital: float = Field(default=1000.0, gt=0)
     trading_profile: str = DEFAULT_TRADING_PROFILE
-    execution_timeframe: str = "1hour"
-    trend_timeframe: str = "4hour"
+    execution_timeframe: str = "30min"
+    trend_timeframe: str = "1hour"
 
     @field_validator("market")
     @classmethod
@@ -163,6 +160,12 @@ class AIPatternStatusResponse(BaseModel):
     history: dict[str, Any] | None = None
 
 
+class AdminResetResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+    deleted_experiments: int
+    ai_history_preserved: bool
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     mode: Literal["PAPER_ONLY"] = "PAPER_ONLY"
@@ -176,7 +179,7 @@ class HealthResponse(BaseModel):
 
 class PublicConfiguration(BaseModel):
     mode: Literal["PAPER_ONLY"] = "PAPER_ONLY"
-    exchange: str = "CoinEx"
+    exchange: str = "MEXC"
     market_type: str = "Spot"
     fees_affect_signals: bool = False
     downtime_recovery_enabled: bool = True
@@ -191,7 +194,7 @@ class PublicConfiguration(BaseModel):
     vip_level: str
     maker_fee_rate: float
     taker_fee_rate: float
-    cet_fee_discount_enabled: bool
+    mx_fee_discount_enabled: bool
     fallback_spread_rate: float
     slippage_rate: float
     estimated_round_trip_cost_rate: float
@@ -218,3 +221,39 @@ class PublicConfiguration(BaseModel):
     ai_pattern_min_confidence: float
     ai_pattern_max_spread_rate: float
     ai_pattern_model_version: str = "AI-PATTERN-v1"
+    selector_min_confidence: float
+    selector_min_expected_net_return: float
+    selector_min_reward_risk_ratio: float
+    selector_model_version: str
+
+
+class PaginationMetadata(BaseModel):
+    page: int
+    page_size: int
+    total_items: int
+    total_pages: int
+    has_previous: bool
+    has_next: bool
+
+
+class ExperimentHistoryResponse(BaseModel):
+    items: list[ExperimentResponse]
+    pagination: PaginationMetadata
+
+
+class StrategyTradeHistorySummary(BaseModel):
+    total_trades: int
+    buy_count: int
+    sell_count: int
+    profitable_exits: int
+    losing_exits: int
+    break_even_exits: int
+    total_transaction_cost: float
+    total_realized_pnl: float
+    win_rate: float | None
+
+
+class StrategyTradeHistoryResponse(BaseModel):
+    items: list[dict[str, Any]]
+    pagination: PaginationMetadata
+    summary: StrategyTradeHistorySummary

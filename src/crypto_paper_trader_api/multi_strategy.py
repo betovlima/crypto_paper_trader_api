@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -47,6 +48,14 @@ class StrategyDecision:
     ai_risk_reason: str | None = None
     ai_horizon_candles: int | None = None
     ai_feature_summary: str | None = None
+
+    # Optional diagnostics emitted by the Adaptive Strategy Selector.
+    selector_selected_strategy: str | None = None
+    selector_market_regime: str | None = None
+    selector_confidence: float | None = None
+    selector_expected_net_return: float | None = None
+    selector_candidate_scores: str | None = None
+    selector_model_version: str | None = None
 
 
 def _ema(row: pd.Series, period: int) -> float:
@@ -357,6 +366,341 @@ class EmaCrossoverStrategy:
         reasons.append("crossover_entry_filters_not_all_satisfied")
         return StrategyDecision(
             "HOLD", "NOT_USED", "HOLD", confirmations, "; ".join(reasons)
+        )
+
+
+class EmaPullbackStrategy:
+    """Buy a bullish pullback to the fast/slow EMA structure."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    def decide(
+        self,
+        account: StrategyAccount,
+        current_row: pd.Series,
+        previous_row: pd.Series,
+        trend_row: pd.Series,
+        costs: ExecutionCosts,
+        profile: TradingProfile,
+    ) -> StrategyDecision:
+        close = float(current_row["close"])
+        open_price = float(current_row["open"])
+        low = float(current_row["low"])
+        atr = max(float(current_row["atr_14"]), 1e-12)
+        fast = _ema(current_row, profile.fast_ema_period)
+        slow = _ema(current_row, profile.slow_ema_period)
+        regime = _ema(current_row, profile.regime_ema_period)
+        previous_close = float(previous_row["close"])
+        trend_fast = _ema(trend_row, profile.fast_ema_period)
+        trend_slow = _ema(trend_row, profile.slow_ema_period)
+        trend_regime = _ema(trend_row, profile.regime_ema_period)
+
+        touch_buffer = atr * self.settings.ema_pullback_touch_atr
+        touched_fast_or_slow = low <= max(fast, slow) + touch_buffer
+        bullish_structure = fast > slow > regime
+        trend_bullish = (
+            trend_fast > trend_slow
+            and float(trend_row["close"]) > trend_regime
+        )
+        bullish_rejection = close > open_price and close > fast and close >= previous_close
+        adx_ok = float(current_row["adx_14"]) >= profile.adx_min
+        volume_ok = float(current_row["relative_volume"]) >= profile.relative_volume_min
+        rsi_ok = profile.rsi_buy_min <= float(current_row["rsi_14"]) <= profile.rsi_buy_max
+        checks = {
+            "bullish_ema_structure": bullish_structure,
+            "bullish_trend_timeframe": trend_bullish,
+            "pulled_back_to_ema": touched_fast_or_slow,
+            "bullish_rejection_close": bullish_rejection,
+            "adx_confirmed": adx_ok,
+            "volume_confirmed": volume_ok,
+            "rsi_confirmed": rsi_ok,
+        }
+        confirmations = sum(checks.values())
+        stop, target, potential_return = _risk_levels(close, atr, profile)
+        stop = min(stop, low - 0.05 * atr)
+        risk = max(close - stop, 1e-12)
+        target = max(target, close + profile.reward_risk_ratio * risk)
+        potential_return = (target - close) / max(close, 1e-12)
+        rr = (target - close) / risk
+        reasons = [
+            f"profile={profile.code}",
+            f"ema_structure={bullish_structure}",
+            f"trend_bullish={trend_bullish}",
+            f"pulled_back_to_ema={touched_fast_or_slow}",
+            f"bullish_rejection={bullish_rejection}",
+            f"confirmations={confirmations}/7",
+            f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
+        ]
+
+        if account.has_open_position:
+            if close < slow or not trend_bullish:
+                reasons.append("close_below_slow_ema_or_trend_reversed")
+                return StrategyDecision(
+                    "SELL", "NOT_USED", "SELL", confirmations, "; ".join(reasons), close
+                )
+            reasons.append("bullish_pullback_position_maintained")
+            return StrategyDecision(
+                "HOLD", "NOT_USED", "HOLD", confirmations, "; ".join(reasons)
+            )
+
+        if all(checks.values()):
+            reasons.append("ema_pullback_entry_approved")
+            return StrategyDecision(
+                "BUY", "NOT_USED", "BUY", confirmations, "; ".join(reasons), close,
+                potential_target_price=target,
+                potential_gross_return=potential_return,
+                reward_risk_ratio=rr,
+                stop_loss_override=stop,
+                take_profit_override=target,
+            )
+        reasons.append("ema_pullback_filters_not_all_satisfied")
+        return StrategyDecision(
+            "HOLD", "NOT_USED", "HOLD", confirmations, "; ".join(reasons)
+        )
+
+
+class LarryVolatilityBreakoutStrategy:
+    """Intraday open-plus-range breakout with trend and volume confirmation."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    def decide(
+        self,
+        account: StrategyAccount,
+        current_row: pd.Series,
+        previous_window: pd.DataFrame,
+        trend_row: pd.Series,
+        costs: ExecutionCosts,
+        profile: TradingProfile,
+    ) -> StrategyDecision:
+        close = float(current_row["close"])
+        high = float(current_row["high"])
+        open_price = float(current_row["open"])
+        atr = max(float(current_row["atr_14"]), 1e-12)
+        if previous_window.empty:
+            return StrategyDecision(
+                "HOLD", "NOT_USED", "HOLD", 0,
+                "larry_breakout_waiting_for_lookback_window",
+            )
+        reference_range = float(previous_window["high"].max() - previous_window["low"].min())
+        trigger = open_price + reference_range * self.settings.larry_breakout_factor
+        trend_bullish = (
+            float(trend_row["close"]) > _ema(trend_row, profile.regime_ema_period)
+            and _ema(trend_row, profile.fast_ema_period) > _ema(trend_row, profile.slow_ema_period)
+        )
+        price_above_regime = close > _ema(current_row, profile.regime_ema_period)
+        breakout = high >= trigger and close >= trigger
+        volume_ok = float(current_row["relative_volume"]) >= profile.relative_volume_min
+        adx_ok = float(current_row["adx_14"]) >= profile.adx_min
+        checks = {
+            "range_breakout": breakout,
+            "trend_bullish": trend_bullish,
+            "price_above_regime": price_above_regime,
+            "volume_confirmed": volume_ok,
+            "adx_confirmed": adx_ok,
+        }
+        confirmations = sum(checks.values())
+        stop = close - self.settings.larry_breakout_stop_atr * atr
+        target = close + self.settings.larry_breakout_target_atr * atr
+        risk = max(close - stop, 1e-12)
+        rr = (target - close) / risk
+        potential_return = (target - close) / max(close, 1e-12)
+        reasons = [
+            f"profile={profile.code}",
+            f"lookback={len(previous_window)}",
+            f"reference_range={reference_range:.8f}",
+            f"breakout_trigger={trigger:.8f}",
+            f"breakout={breakout}",
+            f"confirmations={confirmations}/5",
+            f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
+        ]
+
+        if account.has_open_position:
+            fast = _ema(current_row, profile.fast_ema_period)
+            if close < fast or not trend_bullish:
+                reasons.append("breakout_momentum_lost")
+                return StrategyDecision(
+                    "SELL", "NOT_USED", "SELL", confirmations, "; ".join(reasons), close
+                )
+            reasons.append("breakout_position_maintained")
+            return StrategyDecision(
+                "HOLD", "NOT_USED", "HOLD", confirmations, "; ".join(reasons)
+            )
+
+        if all(checks.values()):
+            reasons.append("larry_volatility_breakout_approved")
+            return StrategyDecision(
+                "BUY", "NOT_USED", "BUY", confirmations, "; ".join(reasons), trigger,
+                potential_target_price=target,
+                potential_gross_return=potential_return,
+                reward_risk_ratio=rr,
+                stop_loss_override=stop,
+                take_profit_override=target,
+            )
+        reasons.append("larry_volatility_breakout_filters_not_all_satisfied")
+        return StrategyDecision(
+            "HOLD", "NOT_USED", "HOLD", confirmations, "; ".join(reasons),
+            execution_reference_price=trigger,
+        )
+
+
+class AdaptiveStrategySelector:
+    """Explainable regime-aware ranking of independently evaluated strategies."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    @staticmethod
+    def detect_regime(current_row: pd.Series, trend_row: pd.Series) -> str:
+        close = float(current_row["close"])
+        ema20 = float(current_row["ema_20"])
+        ema50 = float(current_row["ema_50"])
+        ema200 = float(current_row["ema_200"])
+        adx = float(current_row["adx_14"])
+        volatility = float(current_row.get("volatility_20", 0.0) or 0.0)
+        trend_close = float(trend_row["close"])
+        trend_ema50 = float(trend_row["ema_50"])
+        if volatility >= 0.03:
+            return "HIGH_VOLATILITY"
+        if adx < 16:
+            return "SIDEWAYS"
+        if close > ema20 > ema50 > ema200 and trend_close > trend_ema50:
+            return "UPTREND"
+        if close < ema20 < ema50 and trend_close < trend_ema50:
+            return "DOWNTREND"
+        if adx >= 22 and abs(ema20 - ema50) / max(close, 1e-12) < 0.003:
+            return "VOLATILITY_EXPANSION"
+        return "UNDEFINED"
+
+    def decide(
+        self,
+        account: StrategyAccount,
+        current_row: pd.Series,
+        trend_row: pd.Series,
+        costs: ExecutionCosts,
+        candidates: dict[str, StrategyDecision],
+    ) -> StrategyDecision:
+        regime = self.detect_regime(current_row, trend_row)
+        close = float(current_row["close"])
+        selected_code = account.selector_selected_strategy
+
+        if account.has_open_position:
+            selected = candidates.get(selected_code or "")
+            if selected is not None and selected.final_signal == "SELL":
+                reason = (
+                    f"selector_exit_from={selected_code}; market_regime={regime}; "
+                    f"candidate_reason={selected.reason}"
+                )
+                return StrategyDecision(
+                    "SELL", "SELECTOR", "SELL", selected.technical_confirmations,
+                    reason, close,
+                    selector_selected_strategy=selected_code,
+                    selector_market_regime=regime,
+                    selector_confidence=account.selector_confidence,
+                    selector_expected_net_return=account.selector_expected_net_return,
+                    selector_candidate_scores=account.selector_candidate_scores,
+                    selector_model_version=self.settings.selector_model_version,
+                )
+            reason = f"selector_position_maintained; selected_strategy={selected_code}; market_regime={regime}"
+            return StrategyDecision(
+                "HOLD", "SELECTOR", "HOLD", 0, reason,
+                selector_selected_strategy=selected_code,
+                selector_market_regime=regime,
+                selector_confidence=account.selector_confidence,
+                selector_expected_net_return=account.selector_expected_net_return,
+                selector_candidate_scores=account.selector_candidate_scores,
+                selector_model_version=self.settings.selector_model_version,
+            )
+
+        regime_boosts: dict[str, dict[str, float]] = {
+            "UPTREND": {"EMA_PULLBACK": 0.10, "EMA_CROSSOVER_COST_AWARE": 0.05, "LARRY_VOLATILITY_BREAKOUT": 0.05},
+            "VOLATILITY_EXPANSION": {"LARRY_VOLATILITY_BREAKOUT": 0.12, "EMA_CROSSOVER_COST_AWARE": 0.04},
+            "SIDEWAYS": {"AI_PATTERN_TRADER": 0.04},
+            "HIGH_VOLATILITY": {"LARRY_VOLATILITY_BREAKOUT": 0.03},
+        }
+        score_rows: list[dict[str, object]] = []
+        for code, decision in candidates.items():
+            gross = float(
+                decision.ai_expected_gross_return
+                if decision.ai_expected_gross_return is not None
+                else decision.potential_gross_return or 0.0
+            )
+            net = float(
+                decision.ai_expected_net_return
+                if decision.ai_expected_net_return is not None
+                else gross - costs.estimated_round_trip_rate
+            )
+            confidence = float(
+                decision.ai_confidence
+                if decision.ai_confidence is not None
+                else min(0.50 + 0.06 * decision.technical_confirmations, 0.90)
+            )
+            confidence = min(confidence + regime_boosts.get(regime, {}).get(code, 0.0), 0.99)
+            rr = float(decision.reward_risk_ratio or 0.0)
+            eligible = all(
+                [
+                    decision.final_signal == "BUY",
+                    confidence >= self.settings.selector_min_confidence,
+                    net >= self.settings.selector_min_expected_net_return,
+                    rr >= self.settings.selector_min_reward_risk_ratio,
+                    regime != "DOWNTREND",
+                ]
+            )
+            score = net * 100.0 + confidence + min(rr, 5.0) * 0.05
+            score_rows.append(
+                {
+                    "strategy": code,
+                    "signal": decision.final_signal,
+                    "confidence": round(confidence, 6),
+                    "expected_gross_return": round(gross, 8),
+                    "expected_net_return": round(net, 8),
+                    "reward_risk_ratio": round(rr, 6),
+                    "eligible": eligible,
+                    "score": round(score, 8),
+                }
+            )
+        score_rows.sort(key=lambda item: float(item["score"]), reverse=True)
+        candidate_scores = json.dumps(score_rows, separators=(",", ":"))
+        approved = [item for item in score_rows if bool(item["eligible"])]
+        if not approved:
+            reason = (
+                f"market_regime={regime}; no_candidate_met_selector_thresholds; "
+                f"min_confidence={self.settings.selector_min_confidence:.4f}; "
+                f"min_expected_net_return={self.settings.selector_min_expected_net_return:.6f}; "
+                f"min_reward_risk={self.settings.selector_min_reward_risk_ratio:.4f}"
+            )
+            return StrategyDecision(
+                "HOLD", "SELECTOR", "HOLD", 0, reason,
+                selector_market_regime=regime,
+                selector_candidate_scores=candidate_scores,
+                selector_model_version=self.settings.selector_model_version,
+            )
+
+        winner = approved[0]
+        winner_code = str(winner["strategy"])
+        source = candidates[winner_code]
+        reason = (
+            f"market_regime={regime}; selected_strategy={winner_code}; "
+            f"selector_confidence={float(winner['confidence']):.6f}; "
+            f"expected_net_return={float(winner['expected_net_return']):.6f}; "
+            f"source_reason={source.reason}"
+        )
+        return StrategyDecision(
+            "BUY", "SELECTOR", "BUY", source.technical_confirmations, reason,
+            source.execution_reference_price or close,
+            potential_target_price=source.potential_target_price,
+            potential_gross_return=source.potential_gross_return,
+            reward_risk_ratio=source.reward_risk_ratio,
+            stop_loss_override=source.stop_loss_override,
+            take_profit_override=source.take_profit_override,
+            selector_selected_strategy=winner_code,
+            selector_market_regime=regime,
+            selector_confidence=float(winner["confidence"]),
+            selector_expected_net_return=float(winner["expected_net_return"]),
+            selector_candidate_scores=candidate_scores,
+            selector_model_version=self.settings.selector_model_version,
         )
 
 

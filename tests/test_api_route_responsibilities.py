@@ -11,6 +11,7 @@ def _route(path: str):
 def test_routes_are_grouped_by_http_responsibility() -> None:
     assert _route("/health").tags == ["System"]
     assert _route("/api/v1/experiments").tags == ["Experiments"]
+    assert _route("/api/v1/admin/reset").tags == ["Administration"]
     assert _route(
         "/api/v1/experiments/{experiment_id}/strategy-comparison"
     ).tags == ["Strategy Comparison"]

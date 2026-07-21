@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routers import (
+    admin,
     ai_pattern,
     compatibility,
     experiments,
@@ -47,9 +48,9 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.12.0",
+    version="0.13.3",
     description=(
-        "PAPER_ONLY crypto strategy research using public CoinEx Spot data. "
+        "PAPER_ONLY crypto strategy research using public MEXC Spot data. "
         "All persistent state is stored in SQLite. HTTP routers and application services "
         "are separated by responsibility; no CSV, JSON, ZIP or report files are generated. "
         "AI Pattern Trader learns recurring OHLCV patterns and operates only an independent "
@@ -66,6 +67,7 @@ app.add_middleware(
 )
 
 app.include_router(system.router)
+app.include_router(admin.router)
 app.include_router(experiments.router)
 app.include_router(strategy_comparison.router)
 app.include_router(strategy_data.router)

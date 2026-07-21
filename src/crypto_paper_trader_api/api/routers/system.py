@@ -50,7 +50,7 @@ def public_configuration() -> PublicConfiguration:
         vip_level=settings.vip_level,
         maker_fee_rate=settings.effective_default_maker_fee_rate,
         taker_fee_rate=settings.effective_default_taker_fee_rate,
-        cet_fee_discount_enabled=settings.cet_fee_discount_enabled,
+        mx_fee_discount_enabled=settings.mx_fee_discount_enabled,
         fallback_spread_rate=settings.fallback_spread_rate,
         slippage_rate=settings.slippage_rate,
         estimated_round_trip_cost_rate=settings.round_trip_cost_rate,
@@ -77,4 +77,8 @@ def public_configuration() -> PublicConfiguration:
         ai_pattern_min_confidence=settings.ai_pattern_min_confidence,
         ai_pattern_max_spread_rate=settings.ai_pattern_max_spread_rate,
         ai_pattern_model_version="AI-PATTERN-v1",
+        selector_min_confidence=settings.selector_min_confidence,
+        selector_min_expected_net_return=settings.selector_min_expected_net_return,
+        selector_min_reward_risk_ratio=settings.selector_min_reward_risk_ratio,
+        selector_model_version=settings.selector_model_version,
     )

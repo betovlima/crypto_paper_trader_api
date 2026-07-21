@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from ...database import get_session
 from ...runtime import settings, worker
-from ...schemas import ExperimentCreate, ExperimentResponse
+from ...schemas import ExperimentCreate, ExperimentHistoryResponse, ExperimentResponse
 from ...security import require_admin_key
 from ...services import experiment_service
 
@@ -26,6 +28,31 @@ def list_experiments(
     session: Session = Depends(get_session),
 ) -> list[ExperimentResponse]:
     return experiment_service.list_experiments(session, limit)
+
+
+@router.get("/history", response_model=ExperimentHistoryResponse)
+def list_experiment_history(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    market: str | None = Query(default=None),
+    experiment_status: str | None = Query(default=None, alias="status"),
+    trading_profile: str | None = Query(default=None),
+    start_date: datetime | None = Query(default=None),
+    end_date: datetime | None = Query(default=None),
+    sort_direction: str = Query(default="desc", pattern="^(asc|desc)$"),
+    session: Session = Depends(get_session),
+) -> ExperimentHistoryResponse:
+    return experiment_service.list_experiment_history(
+        session=session,
+        page=page,
+        page_size=page_size,
+        market=market,
+        experiment_status=experiment_status,
+        trading_profile=trading_profile,
+        start_date=start_date,
+        end_date=end_date,
+        sort_direction=sort_direction,
+    )
 
 
 @router.get("/{experiment_id}", response_model=ExperimentResponse)

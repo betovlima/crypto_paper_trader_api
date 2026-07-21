@@ -26,24 +26,24 @@ class Settings(BaseSettings):
     database_url: str | None = None
     ai_database_url: str | None = None
 
-    coinex_base_url: str = "https://api.coinex.com/v2"
+    mexc_base_url: str = "https://api.mexc.com"
     http_timeout_seconds: float = 20.0
     poll_interval_seconds: int = Field(default=15, ge=10, le=900)
 
     default_market: str = "BTCUSDT"
-    default_execution_timeframe: str = "1hour"
-    default_trend_timeframe: str = "4hour"
+    default_execution_timeframe: str = "30min"
+    default_trend_timeframe: str = "1hour"
     default_duration_hours: float = Field(default=24.0, gt=0, le=168)
     default_initial_capital: float = Field(default=1000.0, gt=0)
 
-    # CoinEx Spot VIP 0 baseline. PAPER_ONLY uses taker rates because it simulates
-    # immediate marketable executions. Public market metadata can refresh these rates.
-    vip_level: str = "VIP0"
-    maker_fee_rate: float = Field(default=0.002, ge=0, lt=0.1)
-    taker_fee_rate: float = Field(default=0.002, ge=0, lt=0.1)
-    use_public_market_fee_rates: bool = True
-    cet_fee_discount_enabled: bool = False
-    cet_fee_discount_pct: float = Field(default=0.20, ge=0, lt=1)
+    # MEXC Spot API baseline. PAPER_ONLY simulates immediately marketable taker
+    # executions. Public/promotional zero-fee rates are not assumed for API trading.
+    vip_level: str = "API_SPOT"
+    maker_fee_rate: float = Field(default=0.0, ge=0, lt=0.1)
+    taker_fee_rate: float = Field(default=0.0005, ge=0, lt=0.1)
+    use_public_market_fee_rates: bool = False
+    mx_fee_discount_enabled: bool = False
+    mx_fee_discount_pct: float = Field(default=0.20, ge=0, lt=1)
 
     # Execution friction beyond exchange fees.
     fallback_spread_rate: float = Field(default=0.0002, ge=0, lt=0.1)
@@ -103,6 +103,20 @@ class Settings(BaseSettings):
     ai_pattern_adverse_buffer: float = Field(default=0.75, gt=0, le=2)
     ai_pattern_reward_drawdown_penalty: float = Field(default=0.30, ge=0, le=2)
     ai_pattern_confident_rows: int = Field(default=3000, ge=100, le=50000)
+
+    # Adaptive Strategy Selector. Version 0.13.0 starts with an explainable
+    # rule-and-score model and records every selection for later supervised training.
+    selector_min_confidence: float = Field(default=0.60, ge=0, le=1)
+    selector_min_expected_net_return: float = Field(default=0.0030, ge=0, le=0.1)
+    selector_min_reward_risk_ratio: float = Field(default=1.30, gt=0, le=10)
+    selector_model_version: str = "ADAPTIVE-SELECTOR-RULES-v1"
+
+    # Larry volatility breakout and EMA pullback defaults for intraday profiles.
+    larry_breakout_lookback: int = Field(default=12, ge=4, le=100)
+    larry_breakout_factor: float = Field(default=0.50, gt=0, le=2)
+    larry_breakout_stop_atr: float = Field(default=1.20, gt=0, le=10)
+    larry_breakout_target_atr: float = Field(default=1.80, gt=0, le=20)
+    ema_pullback_touch_atr: float = Field(default=0.25, ge=0, le=3)
 
     @field_validator("default_market")
     @classmethod
@@ -227,14 +241,14 @@ class Settings(BaseSettings):
 
     @property
     def effective_default_taker_fee_rate(self) -> float:
-        if self.cet_fee_discount_enabled:
-            return self.taker_fee_rate * (1 - self.cet_fee_discount_pct)
+        if self.mx_fee_discount_enabled:
+            return self.taker_fee_rate * (1 - self.mx_fee_discount_pct)
         return self.taker_fee_rate
 
     @property
     def effective_default_maker_fee_rate(self) -> float:
-        if self.cet_fee_discount_enabled:
-            return self.maker_fee_rate * (1 - self.cet_fee_discount_pct)
+        if self.mx_fee_discount_enabled:
+            return self.maker_fee_rate * (1 - self.mx_fee_discount_pct)
         return self.maker_fee_rate
 
     def estimated_round_trip_cost_rate(

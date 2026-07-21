@@ -26,7 +26,7 @@ def make_experiment() -> Experiment:
         initial_capital=1000,
         cash_balance=1000,
         asset_quantity=0,
-        vip_level="VIP0",
+        vip_level="API_SPOT",
         maker_fee_rate=0.002,
         taker_fee_rate=0.002,
         fee_source="TEST",
@@ -104,7 +104,7 @@ def test_buy_and_sell_include_vip0_costs_and_stops() -> None:
         assert experiment.total_slippage_cost > 0
 
 
-def test_vip0_round_trip_cost_is_about_point_five_percent_with_defaults() -> None:
+def test_mexc_api_round_trip_cost_uses_conservative_taker_baseline() -> None:
     settings = Settings(data_dir="./test-data")
-    # 0.20% + 0.20% fees, 0.02% spread and 0.05% slippage on each side.
-    assert abs(settings.round_trip_cost_rate - 0.0052) < 1e-12
+    # 0.05% + 0.05% fees, 0.02% spread and 0.05% slippage on each side.
+    assert abs(settings.round_trip_cost_rate - 0.0022) < 1e-12

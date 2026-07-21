@@ -6,38 +6,54 @@ CURRENT_HYBRID = "CURRENT_HYBRID"
 # Fees are accounting-only and never veto technical signals.
 EMA_CROSSOVER_COST_AWARE = "EMA_CROSSOVER_COST_AWARE"
 EMA_CROSSOVER = EMA_CROSSOVER_COST_AWARE
+EMA_PULLBACK = "EMA_PULLBACK"
 
 EMA9_SETUP_91 = "EMA9_SETUP_91"
 EMA9_SETUP_91_COST_AWARE = "EMA9_SETUP_91_COST_AWARE"
 
-# The existing persisted Larry code becomes the classic implementation so all
-# previous experiments keep their account and history after the upgrade.
+# The existing persisted Larry code remains the classic implementation so previous
+# experiments keep their accounts and history after the upgrade.
 LARRY_WILLIAMS_91_CLASSIC = EMA9_SETUP_91_COST_AWARE
 LARRY_WILLIAMS_91 = LARRY_WILLIAMS_91_CLASSIC
 LARRY_WILLIAMS_91_TREND_FOLLOWER = "EMA9_SETUP_91_TREND_FOLLOWER"
+LARRY_VOLATILITY_BREAKOUT = "LARRY_VOLATILITY_BREAKOUT"
 
 AI_PATTERN_TRADER = "AI_PATTERN_TRADER"
+ADAPTIVE_STRATEGY_SELECTOR = "ADAPTIVE_STRATEGY_SELECTOR"
 BUY_AND_HOLD = "BUY_AND_HOLD"
 
+# The selector is shown first, but worker evaluation computes all candidate decisions
+# before resolving the selector decision for the same closed candle.
 ACTIVE_STRATEGY_CODES = (
+    ADAPTIVE_STRATEGY_SELECTOR,
     CURRENT_HYBRID,
     EMA_CROSSOVER,
+    EMA_PULLBACK,
     LARRY_WILLIAMS_91_CLASSIC,
     LARRY_WILLIAMS_91_TREND_FOLLOWER,
+    LARRY_VOLATILITY_BREAKOUT,
     AI_PATTERN_TRADER,
 )
 
 STRATEGY_DISPLAY_NAMES = {
+    ADAPTIVE_STRATEGY_SELECTOR: "Adaptive Strategy Selector",
     CURRENT_HYBRID: "Profile-Aware Hybrid",
     EMA_CROSSOVER: "EMA Crossover",
+    EMA_PULLBACK: "EMA Pullback",
     EMA9_SETUP_91: "Larry Williams 9.1 Classic",
     LARRY_WILLIAMS_91_CLASSIC: "Larry Williams 9.1 Classic",
     LARRY_WILLIAMS_91_TREND_FOLLOWER: "Larry Williams 9.1 Trend Follower",
+    LARRY_VOLATILITY_BREAKOUT: "Larry Volatility Breakout",
     AI_PATTERN_TRADER: "AI Pattern Trader",
     BUY_AND_HOLD: "Buy and Hold",
 }
 
 STRATEGY_DESCRIPTIONS = {
+    ADAPTIVE_STRATEGY_SELECTOR: (
+        "Evaluates the current market regime and every eligible strategy on the same closed "
+        "candle. It ranks candidates by expected net return, confidence and risk/reward, can "
+        "select one strategy or HOLD, and records the realized reward after each exit."
+    ),
     CURRENT_HYBRID: (
         "Combines the selected profile's EMAs, RSI, ADX, relative volume and XGBoost "
         "direction probability. Exchange fees are recorded after execution and never veto "
@@ -46,6 +62,11 @@ STRATEGY_DESCRIPTIONS = {
     EMA_CROSSOVER: (
         "Buys after a fresh fast-EMA crossover above the slow EMA, with trend, ADX, volume "
         "and RSI confirmation. Fees affect the reported net result, not the signal."
+    ),
+    EMA_PULLBACK: (
+        "Trades a pullback inside an established bullish EMA structure. Price must return "
+        "toward the fast or slow EMA and close back above the fast EMA with trend and volume "
+        "confirmation."
     ),
     LARRY_WILLIAMS_91_CLASSIC: (
         "Classic Setup 9.1: EMA 9 must turn strictly from down to up on a candle that crosses "
@@ -56,6 +77,11 @@ STRATEGY_DESCRIPTIONS = {
         "Adapted Setup 9.1 with the same strict reversal entry. After entry, the protective "
         "stop follows the low of each newly closed candle, never moves down, and exits on the "
         "stop or a bearish EMA 9 reversal."
+    ),
+    LARRY_VOLATILITY_BREAKOUT: (
+        "Intraday volatility breakout inspired by Larry Williams. It compares the current "
+        "price with an open-plus-range trigger, requires trend and volume confirmation, and "
+        "uses ATR-based stop and target levels."
     ),
     AI_PATTERN_TRADER: (
         "Autonomous paper strategy that learns recurring OHLCV structures directly from "
@@ -72,5 +98,26 @@ EMA9_STRATEGY_CODES = {
 }
 EMA9_CLASSIC_STRATEGY_CODES = {EMA9_SETUP_91, LARRY_WILLIAMS_91_CLASSIC}
 EMA9_TREND_FOLLOWER_STRATEGY_CODES = {LARRY_WILLIAMS_91_TREND_FOLLOWER}
-DIRECT_ENTRY_STRATEGY_CODES = {CURRENT_HYBRID, EMA_CROSSOVER, AI_PATTERN_TRADER}
-DYNAMIC_RISK_STRATEGY_CODES = {CURRENT_HYBRID, EMA_CROSSOVER, AI_PATTERN_TRADER}
+DIRECT_ENTRY_STRATEGY_CODES = {
+    CURRENT_HYBRID,
+    EMA_CROSSOVER,
+    EMA_PULLBACK,
+    LARRY_VOLATILITY_BREAKOUT,
+    AI_PATTERN_TRADER,
+    ADAPTIVE_STRATEGY_SELECTOR,
+}
+DYNAMIC_RISK_STRATEGY_CODES = {
+    CURRENT_HYBRID,
+    EMA_CROSSOVER,
+    EMA_PULLBACK,
+    LARRY_VOLATILITY_BREAKOUT,
+    AI_PATTERN_TRADER,
+    ADAPTIVE_STRATEGY_SELECTOR,
+}
+SELECTOR_CANDIDATE_CODES = (
+    CURRENT_HYBRID,
+    EMA_CROSSOVER,
+    EMA_PULLBACK,
+    LARRY_VOLATILITY_BREAKOUT,
+    AI_PATTERN_TRADER,
+)

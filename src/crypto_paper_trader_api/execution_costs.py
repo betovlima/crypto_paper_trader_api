@@ -14,7 +14,7 @@ class MarketRules:
     base_precision: int
     quote_precision: int
     status: str
-    source: str = "COINEX_PUBLIC_MARKET"
+    source: str = "MEXC_PUBLIC_EXCHANGE_INFO"
 
 
 @dataclass(frozen=True)

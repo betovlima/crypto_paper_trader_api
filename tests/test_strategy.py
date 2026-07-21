@@ -77,7 +77,7 @@ def open_experiment() -> Experiment:
         take_profit_price=102,
         trailing_stop_price=None,
         last_price=101,
-        vip_level="VIP0",
+        vip_level="API_SPOT",
         maker_fee_rate=0.002,
         taker_fee_rate=0.002,
         fee_source="TEST",
