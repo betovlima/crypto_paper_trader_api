@@ -17,6 +17,7 @@ LARRY_WILLIAMS_91_CLASSIC = EMA9_SETUP_91_COST_AWARE
 LARRY_WILLIAMS_91 = LARRY_WILLIAMS_91_CLASSIC
 LARRY_WILLIAMS_91_TREND_FOLLOWER = "EMA9_SETUP_91_TREND_FOLLOWER"
 LARRY_VOLATILITY_BREAKOUT = "LARRY_VOLATILITY_BREAKOUT"
+STORMER_FILHA_MAL_CRIADA = "STORMER_FILHA_MAL_CRIADA"
 
 AI_PATTERN_TRADER = "AI_PATTERN_TRADER"
 ADAPTIVE_STRATEGY_SELECTOR = "ADAPTIVE_STRATEGY_SELECTOR"
@@ -32,6 +33,7 @@ ACTIVE_STRATEGY_CODES = (
     LARRY_WILLIAMS_91_CLASSIC,
     LARRY_WILLIAMS_91_TREND_FOLLOWER,
     LARRY_VOLATILITY_BREAKOUT,
+    STORMER_FILHA_MAL_CRIADA,
 )
 
 STRATEGY_DISPLAY_NAMES = {
@@ -43,6 +45,7 @@ STRATEGY_DISPLAY_NAMES = {
     LARRY_WILLIAMS_91_CLASSIC: "Larry Williams 9.1 Classic",
     LARRY_WILLIAMS_91_TREND_FOLLOWER: "Larry Williams 9.1 Trend Follower",
     LARRY_VOLATILITY_BREAKOUT: "Larry Volatility Breakout",
+    STORMER_FILHA_MAL_CRIADA: "Stormer Filha Mal Criada",
     AI_PATTERN_TRADER: "AI Pattern Trader",
     BUY_AND_HOLD: "Buy and Hold",
 }
@@ -82,6 +85,11 @@ STRATEGY_DESCRIPTIONS = {
         "price with an open-plus-range trigger, requires trend and volume confirmation, and "
         "uses ATR-based stop and target levels."
     ),
+    STORMER_FILHA_MAL_CRIADA: (
+        "Trend-following pullback setup based on a ribbon of seven aligned exponential moving "
+        "averages (20, 25, 30, 35, 40, 45 and 50). It arms an entry above the pullback candle, "
+        "places the initial stop below the next untouched EMA and targets three times the risk."
+    ),
     AI_PATTERN_TRADER: (
         "Autonomous paper strategy that learns recurring OHLCV structures directly from "
         "chronological candle windows. It combines an Extra Trees return model, nearest-neighbour "
@@ -102,6 +110,7 @@ DIRECT_ENTRY_STRATEGY_CODES = {
     EMA_CROSSOVER,
     EMA_PULLBACK,
     LARRY_VOLATILITY_BREAKOUT,
+    STORMER_FILHA_MAL_CRIADA,
     AI_PATTERN_TRADER,
     ADAPTIVE_STRATEGY_SELECTOR,
 }
@@ -110,6 +119,7 @@ DYNAMIC_RISK_STRATEGY_CODES = {
     EMA_CROSSOVER,
     EMA_PULLBACK,
     LARRY_VOLATILITY_BREAKOUT,
+    STORMER_FILHA_MAL_CRIADA,
     AI_PATTERN_TRADER,
     ADAPTIVE_STRATEGY_SELECTOR,
 }

@@ -38,7 +38,7 @@ def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
     open_ = data["open"].astype(float)
     volume = data["volume"].astype(float)
 
-    for period in (5, 9, 13, 20, 21, 34, 50, 200):
+    for period in (5, 9, 13, 20, 21, 25, 30, 34, 35, 40, 45, 50, 200):
         data[f"ema_{period}"] = close.ewm(
             span=period, adjust=False, min_periods=period
         ).mean()
@@ -103,7 +103,12 @@ def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
                 "ema_13",
                 "ema_20",
                 "ema_21",
+                "ema_25",
+                "ema_30",
                 "ema_34",
+                "ema_35",
+                "ema_40",
+                "ema_45",
                 "ema_50",
                 "ema_200",
                 "rsi_14",

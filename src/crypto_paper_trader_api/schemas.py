@@ -175,6 +175,27 @@ class StopRunningExperimentResponse(BaseModel):
     ai_scanner_running: bool
 
 
+class AIOpportunityMarketDiagnostic(BaseModel):
+    market: str
+    status: str
+    action: str | None = None
+    downloaded_execution_candles: int = 0
+    downloaded_trend_candles: int = 0
+    training_samples: int = 0
+    required_training_samples: int = 0
+    missing_training_samples: int = 0
+    selected_training_window: int | None = None
+    validation_accuracy: float | None = None
+    validation_mae: float | None = None
+    regime: str | None = None
+    confidence: float | None = None
+    upward_probability: float | None = None
+    expected_net_return: float | None = None
+    score: float | None = None
+    risk_reason: str | None = None
+    model_version: str | None = None
+
+
 class AIOpportunityScannerStatus(BaseModel):
     enabled: bool
     running: bool
@@ -200,6 +221,7 @@ class AIOpportunityScannerStatus(BaseModel):
     scan_started_at: datetime | None = None
     last_activity_at: datetime | None = None
     last_error: str | None
+    market_diagnostics: list[AIOpportunityMarketDiagnostic] = []
 
 
 class AIOpportunityItem(BaseModel):

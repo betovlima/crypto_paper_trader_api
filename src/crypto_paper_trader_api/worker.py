@@ -36,6 +36,7 @@ from .multi_strategy import (
     EmaPullbackStrategy,
     HybridComparisonStrategy,
     LarryVolatilityBreakoutStrategy,
+    StormerFilhaMalCriadaStrategy,
     StrategyDecision,
 )
 from .strategy_codes import (
@@ -51,6 +52,7 @@ from .strategy_codes import (
     EMA9_STRATEGY_CODES,
     LARRY_VOLATILITY_BREAKOUT,
     LARRY_WILLIAMS_91_TREND_FOLLOWER,
+    STORMER_FILHA_MAL_CRIADA,
     STRATEGY_DISPLAY_NAMES,
 )
 from .trading_profiles import (
@@ -74,6 +76,7 @@ class TraderWorker:
         self.ema_crossover_strategy = EmaCrossoverCostAwareStrategy()
         self.ema_pullback_strategy = EmaPullbackStrategy(settings)
         self.larry_volatility_strategy = LarryVolatilityBreakoutStrategy(settings)
+        self.stormer_filha_mal_criada_strategy = StormerFilhaMalCriadaStrategy(settings)
         self.adaptive_selector = AdaptiveStrategySelector(settings)
         self.ema9_classic_strategy = Ema9Setup91Strategy(
             settings=settings, cost_aware=False, mode=Ema9Setup91Strategy.CLASSIC
@@ -729,6 +732,15 @@ class TraderWorker:
                     account=account,
                     current_row=execution_row,
                     previous_window=previous_window,
+                    trend_row=trend_row,
+                    costs=costs,
+                    profile=profile,
+                )
+            elif account.strategy_code == STORMER_FILHA_MAL_CRIADA:
+                decision = self.stormer_filha_mal_criada_strategy.decide(
+                    account=account,
+                    current_row=execution_row,
+                    previous_row=previous_row,
                     trend_row=trend_row,
                     costs=costs,
                     profile=profile,
@@ -1785,7 +1797,7 @@ def ensure_strategy_accounts(
             max_drawdown_pct=(experiment.max_drawdown_pct if copy_legacy_hybrid else 0.0),
             consecutive_losses=(experiment.consecutive_losses if copy_legacy_hybrid else 0),
             cooldown_until=(experiment.cooldown_until if copy_legacy_hybrid else None),
-            setup_status="IDLE" if code in EMA9_STRATEGY_CODES else "N/A",
+            setup_status="IDLE" if code in EMA9_STRATEGY_CODES or code == STORMER_FILHA_MAL_CRIADA else "N/A",
             stop_management_mode=(
                 "TREND_FOLLOWER"
                 if code == LARRY_WILLIAMS_91_TREND_FOLLOWER

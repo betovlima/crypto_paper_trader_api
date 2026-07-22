@@ -71,6 +71,7 @@ def get_status(scanner: AIOpportunityScanner) -> dict[str, object]:
         or persisted["last_scan_started_at"],
         "last_activity_at": progress.get("last_activity_at"),
         "last_error": progress.get("last_error") or persisted["last_error"],
+        "market_diagnostics": list(progress.get("market_diagnostics") or []),
     }
 
 

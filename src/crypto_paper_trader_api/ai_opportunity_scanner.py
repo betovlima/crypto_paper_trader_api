@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Callable, TypeVar
@@ -62,6 +62,7 @@ class ScannerProgress:
     scan_started_at: datetime | None = None
     last_activity_at: datetime | None = None
     last_error: str | None = None
+    market_diagnostics: tuple[dict[str, object], ...] = field(default_factory=tuple)
 
 
 class AIOpportunityScanner:
@@ -201,6 +202,7 @@ class AIOpportunityScanner:
                 training_window=None,
                 scan_started_at=started_at,
                 last_error=None,
+                market_diagnostics=(),
             )
             self._save_state(
                 status="SCANNING",
@@ -227,6 +229,7 @@ class AIOpportunityScanner:
             ranked_candidates: list[dict[str, object]] = []
             learning_candidates: list[dict[str, object]] = []
             failure_messages: list[str] = []
+            market_diagnostics: list[dict[str, object]] = []
             failed_markets = 0
 
             for index, item in enumerate(universe, start=1):
@@ -242,6 +245,7 @@ class AIOpportunityScanner:
                         successful_markets=len(ranked_candidates),
                         failed_markets=failed_markets,
                     )
+                    market_diagnostics.append(self._candidate_diagnostic(candidate))
                     if self._is_ranked_opportunity(candidate):
                         ranked_candidates.append(candidate)
                     else:
@@ -265,6 +269,7 @@ class AIOpportunityScanner:
                         ),
                         eligible_markets=len(ranked_candidates),
                         learning_markets=len(learning_candidates),
+                        market_diagnostics=tuple(market_diagnostics),
                     )
 
             evaluated_markets = len(ranked_candidates) + len(learning_candidates)
@@ -319,6 +324,7 @@ class AIOpportunityScanner:
                 training_window=None,
                 scan_started_at=started_at,
                 last_error=None,
+                market_diagnostics=tuple(market_diagnostics),
             )
 
     async def _evaluate_market(
@@ -491,10 +497,42 @@ class AIOpportunityScanner:
             "expected_net_return": decision.ai_expected_net_return,
             "quote_volume_24h": quote_volume,
             "spread_rate": depth.spread_rate,
+            "downloaded_execution_candles": int(len(execution_frame)),
+            "downloaded_trend_candles": int(len(trend_frame)),
             "training_samples": int(decision.ai_training_samples or 0),
+            "required_training_samples": int(self.settings.ai_scanner_min_training_rows),
+            "missing_training_samples": max(int(self.settings.ai_scanner_min_training_rows) - int(decision.ai_training_samples or 0), 0),
+            "selected_training_window": int(decision.ai_training_samples or 0),
+            "validation_accuracy": decision.ai_validation_accuracy,
+            "validation_mae": decision.ai_validation_mae,
+            "risk_status": decision.ai_risk_status,
+            "risk_reason": decision.ai_risk_reason,
             "model_version": decision.ai_model_version or AI_PATTERN_MODEL_VERSION,
             "reason": reason,
             "scanned_at": scanned_at,
+        }
+
+    @staticmethod
+    def _candidate_diagnostic(candidate: dict[str, object]) -> dict[str, object]:
+        return {
+            "market": candidate.get("market"),
+            "status": candidate.get("risk_status") or candidate.get("action") or "UNKNOWN",
+            "action": candidate.get("action"),
+            "downloaded_execution_candles": candidate.get("downloaded_execution_candles", 0),
+            "downloaded_trend_candles": candidate.get("downloaded_trend_candles", 0),
+            "training_samples": candidate.get("training_samples", 0),
+            "required_training_samples": candidate.get("required_training_samples", 0),
+            "missing_training_samples": candidate.get("missing_training_samples", 0),
+            "selected_training_window": candidate.get("selected_training_window"),
+            "validation_accuracy": candidate.get("validation_accuracy"),
+            "validation_mae": candidate.get("validation_mae"),
+            "regime": candidate.get("regime"),
+            "confidence": candidate.get("confidence"),
+            "upward_probability": candidate.get("upward_probability"),
+            "expected_net_return": candidate.get("expected_net_return"),
+            "score": candidate.get("score"),
+            "risk_reason": candidate.get("risk_reason"),
+            "model_version": candidate.get("model_version"),
         }
 
     @staticmethod
@@ -517,6 +555,26 @@ class AIOpportunityScanner:
             return False
         return True
 
+    @staticmethod
+    def _snapshot_payload(candidate: dict[str, object]) -> dict[str, object]:
+        """Return only fields that are real columns of the persisted snapshot model.
+
+        Scanner candidates also contain transient diagnostics used by the status endpoint.
+        Those values must remain in memory and must never be forwarded to the SQLAlchemy
+        constructor unless matching database columns are added through a migration.
+        """
+        reserved_fields = {"id", "scan_id", "rank"}
+        snapshot_fields = {
+            column.name
+            for column in AIOpportunitySnapshot.__table__.columns
+            if column.name not in reserved_fields
+        }
+        return {
+            key: value
+            for key, value in candidate.items()
+            if key in snapshot_fields
+        }
+
     def _persist_scan(self, scan_id: str, selected: list[dict[str, object]]) -> None:
         with AISessionLocal() as session:
             session.execute(delete(AIOpportunitySnapshot))
@@ -525,7 +583,7 @@ class AIOpportunityScanner:
                     AIOpportunitySnapshot(
                         scan_id=scan_id,
                         rank=rank,
-                        **candidate,
+                        **self._snapshot_payload(candidate),
                     )
                 )
             stale_scan_ids = list(

@@ -148,3 +148,16 @@ All executions are simulated. Public MEXC data is used for analysis, and the ada
 - Keeps local backtests, walk-forward validation, transaction costs, drawdown and trade-count rules authoritative.
 - Exposes the AI provider, model, review status, review score and review explanation to the frontend.
 - Sends `store=false` in OpenAI Responses API requests.
+
+
+
+## v0.16.2 — AI scanner snapshot persistence fix
+
+- Keeps per-market scanner diagnostics in the status response.
+- Filters transient diagnostic fields before creating `AIOpportunitySnapshot`.
+- Prevents `TypeError` failures caused by fields such as `downloaded_execution_candles`.
+- Adds a regression test for the snapshot payload contract.
+
+## v0.16.0 — Stormer Filha Mal Criada
+
+Adds a long-only EMA ribbon pullback strategy using EMAs 20, 25, 30, 35, 40, 45 and 50, an armed breakout trigger, a stop below the next untouched EMA and a 3R target.

@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timezone
 from types import MethodType
 
+from crypto_paper_trader_api.ai_opportunity_models import AIOpportunitySnapshot
 from crypto_paper_trader_api.ai_opportunity_scanner import AIOpportunityScanner
 from crypto_paper_trader_api.config import Settings
 
@@ -113,3 +114,41 @@ def test_market_progress_is_bounded_and_monotonic() -> None:
     assert values[0] == 15
     assert values[-1] == 90
     assert values == sorted(values)
+
+
+def test_snapshot_payload_excludes_transient_scanner_diagnostics() -> None:
+    candidate = _candidate("BTCUSDT", datetime.now(timezone.utc))
+    candidate.update(
+        {
+            "downloaded_execution_candles": 499,
+            "downloaded_trend_candles": 499,
+            "required_training_samples": 250,
+            "missing_training_samples": 0,
+            "selected_training_window": 295,
+            "validation_accuracy": 0.54,
+            "validation_mae": 0.01,
+            "risk_status": "OBSERVATION",
+            "risk_reason": "Diagnostic-only field.",
+        }
+    )
+
+    payload = AIOpportunityScanner._snapshot_payload(candidate)
+
+    assert payload["market"] == "BTCUSDT"
+    assert payload["training_samples"] == 800
+    assert "downloaded_execution_candles" not in payload
+    assert "downloaded_trend_candles" not in payload
+    assert "required_training_samples" not in payload
+    assert "missing_training_samples" not in payload
+    assert "selected_training_window" not in payload
+    assert "validation_accuracy" not in payload
+    assert "validation_mae" not in payload
+    assert "risk_status" not in payload
+    assert "risk_reason" not in payload
+
+    snapshot = AIOpportunitySnapshot(
+        scan_id="00000000-0000-0000-0000-000000000001",
+        rank=1,
+        **payload,
+    )
+    assert snapshot.market == "BTCUSDT"
