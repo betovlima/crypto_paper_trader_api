@@ -18,7 +18,7 @@ def scanner_status() -> AIOpportunityScannerStatus:
 
 @router.get("/latest", response_model=list[AIOpportunityItem])
 def latest_opportunities(
-    limit: int = Query(default=5, ge=1, le=20),
+    limit: int = Query(default=10, ge=1, le=20),
 ) -> list[AIOpportunityItem]:
     return [
         AIOpportunityItem.model_validate(item)

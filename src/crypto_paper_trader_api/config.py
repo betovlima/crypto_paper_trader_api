@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     ai_scanner_enabled: bool = True
     ai_scanner_interval_seconds: int = Field(default=300, ge=60, le=3600)
     ai_scanner_universe_size: int = Field(default=10, ge=3, le=50)
-    ai_scanner_result_limit: int = Field(default=5, ge=1, le=20)
+    ai_scanner_result_limit: int = Field(default=10, ge=1, le=20)
     ai_scanner_quote_asset: str = "USDT"
     ai_scanner_execution_timeframe: str = "30min"
     ai_scanner_trend_timeframe: str = "1hour"

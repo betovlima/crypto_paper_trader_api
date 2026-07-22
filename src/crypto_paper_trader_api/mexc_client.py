@@ -51,7 +51,7 @@ class MEXCPublicClient:
         self._client = httpx.AsyncClient(
             base_url=settings.mexc_base_url.rstrip("/"),
             timeout=settings.http_timeout_seconds,
-            headers={"User-Agent": "crypto-paper-trader/0.15.0"},
+            headers={"User-Agent": "crypto-paper-trader/0.16.3"},
         )
 
     async def close(self) -> None:

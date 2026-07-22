@@ -75,10 +75,20 @@ The scanner is independent from experiments and continues running after `Stop ex
 
 ```http
 GET /api/v1/ai-opportunities/status
-GET /api/v1/ai-opportunities/latest?limit=5
+GET /api/v1/ai-opportunities/latest?limit=10
 ```
 
 It supports real progress states, long MEXC candle histories through pagination, adaptive training windows and error details.
+
+Optional scanner sizing settings:
+
+```env
+AI_SCANNER_UNIVERSE_SIZE=10
+AI_SCANNER_RESULT_LIMIT=10
+```
+
+`AI_SCANNER_RESULT_LIMIT` controls how many ranked markets are persisted after each scan.
+The `/latest?limit=` parameter can only return records that were persisted by the scanner.
 
 ## Protected experiment stopping
 
@@ -150,6 +160,13 @@ All executions are simulated. Public MEXC data is used for analysis, and the ada
 - Sends `store=false` in OpenAI Responses API requests.
 
 
+
+## v0.16.3 — persist all ten ranked scanner markets
+
+- Changes the scanner default result limit from 5 to 10.
+- Changes the `/api/v1/ai-opportunities/latest` default query limit from 5 to 10.
+- Keeps the result limit configurable through `AI_SCANNER_RESULT_LIMIT`.
+- Adds regression tests confirming that ten ranked markets are persisted and returned.
 
 ## v0.16.2 — AI scanner snapshot persistence fix
 
