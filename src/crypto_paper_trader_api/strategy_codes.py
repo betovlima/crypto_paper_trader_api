@@ -18,6 +18,7 @@ LARRY_WILLIAMS_91 = LARRY_WILLIAMS_91_CLASSIC
 LARRY_WILLIAMS_91_TREND_FOLLOWER = "EMA9_SETUP_91_TREND_FOLLOWER"
 LARRY_VOLATILITY_BREAKOUT = "LARRY_VOLATILITY_BREAKOUT"
 STORMER_FILHA_MAL_CRIADA = "STORMER_FILHA_MAL_CRIADA"
+LBR_310_ANTI_CONTEXT = "LBR_310_ANTI_CONTEXT"
 
 AI_PATTERN_TRADER = "AI_PATTERN_TRADER"
 ADAPTIVE_STRATEGY_SELECTOR = "ADAPTIVE_STRATEGY_SELECTOR"
@@ -34,6 +35,7 @@ ACTIVE_STRATEGY_CODES = (
     LARRY_WILLIAMS_91_TREND_FOLLOWER,
     LARRY_VOLATILITY_BREAKOUT,
     STORMER_FILHA_MAL_CRIADA,
+    LBR_310_ANTI_CONTEXT,
 )
 
 STRATEGY_DISPLAY_NAMES = {
@@ -46,6 +48,7 @@ STRATEGY_DISPLAY_NAMES = {
     LARRY_WILLIAMS_91_TREND_FOLLOWER: "EMA 9 Reversal with Trailing Stop",
     LARRY_VOLATILITY_BREAKOUT: "Volatility Range Breakout",
     STORMER_FILHA_MAL_CRIADA: "Seven-EMA Trend Pullback (Stormer)",
+    LBR_310_ANTI_CONTEXT: "Trend Resumption with LBR 3/10",
     AI_PATTERN_TRADER: "AI Candle Pattern Recognition",
     BUY_AND_HOLD: "Buy and Hold",
 }
@@ -92,6 +95,15 @@ STRATEGY_DESCRIPTIONS = {
         "averages (20, 25, 30, 35, 40, 45 and 50). It arms an entry above the pullback candle, "
         "places the initial stop below the next untouched EMA and targets three times the risk."
     ),
+    LBR_310_ANTI_CONTEXT: (
+        "Trend-resumption strategy based on Linda Bradford Raschke's original 3/10 Anti setup. "
+        "It uses SMA 3 minus SMA 10, a 16-period signal line, a weak pullback and a momentum "
+        "hook. The previous completed UTC day and its final hour form a 24-hour baseline; the "
+        "current UTC day's first hour is added after it closes. This crypto daily baseline is an "
+        "application context filter rather than part of the original Anti setup, and it is "
+        "never an entry signal by itself. Entry requires a later bullish candle to close above "
+        "the armed setup high, with exhaustion and extension controls."
+    ),
     AI_PATTERN_TRADER: (
         "Autonomous paper strategy that learns recurring OHLCV structures directly from "
         "chronological candle windows. It combines an Extra Trees return model, nearest-neighbour "
@@ -115,15 +127,19 @@ DIRECT_ENTRY_STRATEGY_CODES = {
     EMA_PULLBACK,
     LARRY_VOLATILITY_BREAKOUT,
     STORMER_FILHA_MAL_CRIADA,
+    LBR_310_ANTI_CONTEXT,
     AI_PATTERN_TRADER,
     ADAPTIVE_STRATEGY_SELECTOR,
 }
+SETUP_STATE_STRATEGY_CODES = EMA9_STRATEGY_CODES | {LBR_310_ANTI_CONTEXT}
+
 DYNAMIC_RISK_STRATEGY_CODES = {
     CURRENT_HYBRID,
     EMA_CROSSOVER,
     EMA_PULLBACK,
     LARRY_VOLATILITY_BREAKOUT,
     STORMER_FILHA_MAL_CRIADA,
+    LBR_310_ANTI_CONTEXT,
     AI_PATTERN_TRADER,
     ADAPTIVE_STRATEGY_SELECTOR,
 }

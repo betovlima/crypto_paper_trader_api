@@ -181,6 +181,23 @@ class Settings(BaseSettings):
     larry_breakout_target_atr: float = Field(default=1.80, gt=0, le=20)
     ema_pullback_touch_atr: float = Field(default=0.25, ge=0, le=3)
 
+    # Linda Bradford Raschke 3/10 Anti adaptation for continuously traded crypto.
+    # The 3/10/16 periods remain fixed by default to preserve the original oscillator identity.
+    lbr_anti_fast_period: int = Field(default=3, ge=2, le=20)
+    lbr_anti_slow_period: int = Field(default=10, ge=3, le=50)
+    lbr_anti_signal_period: int = Field(default=16, ge=3, le=80)
+    lbr_anti_impulse_lookback: int = Field(default=6, ge=3, le=24)
+    lbr_anti_pullback_min_bars: int = Field(default=2, ge=1, le=12)
+    lbr_anti_pullback_max_bars: int = Field(default=6, ge=2, le=24)
+    lbr_anti_min_impulse_atr: float = Field(default=1.0, ge=0.1, le=10)
+    lbr_anti_max_pullback_strength: float = Field(default=0.75, ge=0.1, le=1.5)
+    lbr_anti_max_pullback_range_ratio: float = Field(default=0.90, ge=0.1, le=2)
+    lbr_anti_stop_atr_buffer: float = Field(default=0.15, ge=0, le=3)
+    lbr_anti_reward_risk_ratio: float = Field(default=2.5, gt=0, le=10)
+    lbr_anti_setup_max_age_bars: int = Field(default=6, ge=1, le=48)
+    lbr_anti_require_signal_cross: bool = True
+    lbr_anti_require_utc_baseline_alignment: bool = True
+
     @field_validator("default_market")
     @classmethod
     def normalize_market(cls, value: str) -> str:

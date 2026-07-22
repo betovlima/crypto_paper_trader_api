@@ -114,6 +114,32 @@ class ExperimentResponse(BaseModel):
     error_message: str | None
 
 
+class RunningExperimentStrategySummary(BaseModel):
+    total: int
+    active_positions: int
+    armed_entries: int
+    waiting: int
+
+
+class RunningExperimentHeaderSummary(BaseModel):
+    visible: bool
+    experiment_id: str | None = None
+    status: str | None = None
+    status_tone: str = "idle"
+    market: str | None = None
+    market_label: str | None = None
+    decision_timeframe: str | None = None
+    decision_timeframe_label: str | None = None
+    trend_timeframe: str | None = None
+    trend_timeframe_label: str | None = None
+    next_analysis_at: datetime | None = None
+    next_analysis_countdown_seconds: int | None = None
+    next_analysis_countdown_label: str | None = None
+    last_market_update_at: datetime | None = None
+    last_market_update_label: str | None = None
+    strategy_summary: RunningExperimentStrategySummary | None = None
+
+
 class StrategyComparisonItem(BaseModel):
     strategy_code: str
     display_name: str

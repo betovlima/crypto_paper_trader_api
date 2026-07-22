@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 
 from fastapi import HTTPException, status
@@ -8,11 +8,147 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import Settings
-from ..models import Experiment
-from ..schemas import ExperimentCreate, ExperimentHistoryResponse, ExperimentResponse
+from ..models import Experiment, StrategyAccount
+from ..schemas import (
+    ExperimentCreate,
+    ExperimentHistoryResponse,
+    ExperimentResponse,
+    RunningExperimentHeaderSummary,
+)
+from ..strategy_codes import ACTIVE_STRATEGY_CODES
 from ..trading_profiles import get_trading_profile
 from ..worker import TraderWorker, create_experiment_record, ensure_strategy_accounts
 from .common import get_experiment_or_404
+
+
+_MARKET_QUOTE_ASSETS = (
+    "USDT",
+    "USDC",
+    "FDUSD",
+    "BUSD",
+    "TUSD",
+    "DAI",
+    "BTC",
+    "ETH",
+    "BNB",
+)
+
+_TIMEFRAME_LABELS = {
+    "1min": "1 min",
+    "5min": "5 min",
+    "15min": "15 min",
+    "30min": "30 min",
+    "1hour": "1 h (60 min)",
+    "4hour": "4 h",
+    "1day": "1 day",
+    "1week": "1 week",
+}
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _format_market_pair(market: str) -> str:
+    normalized = market.strip().upper()
+    for quote_asset in _MARKET_QUOTE_ASSETS:
+        if normalized.endswith(quote_asset) and len(normalized) > len(quote_asset):
+            return f"{normalized[:-len(quote_asset)]}/{quote_asset}"
+    return normalized
+
+
+def _format_timeframe(timeframe: str) -> str:
+    return _TIMEFRAME_LABELS.get(timeframe, timeframe)
+
+
+def _format_utc_time(value: datetime | None) -> str | None:
+    normalized = _as_utc(value)
+    return normalized.strftime("%H:%M:%S UTC") if normalized else None
+
+
+def _format_countdown(target: datetime | None, now: datetime) -> tuple[int | None, str | None]:
+    normalized_target = _as_utc(target)
+    normalized_now = _as_utc(now)
+    if normalized_target is None or normalized_now is None:
+        return None, None
+
+    remaining_seconds = max(0, math.ceil((normalized_target - normalized_now).total_seconds()))
+    days, remainder = divmod(remaining_seconds, 86_400)
+    hours, remainder = divmod(remainder, 3_600)
+    minutes, seconds = divmod(remainder, 60)
+
+    if days > 0:
+        label = f"{days}d {hours:02d}:{minutes:02d}:{seconds:02d}"
+    elif hours > 0:
+        label = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    else:
+        label = f"{minutes:02d}:{seconds:02d}"
+    return remaining_seconds, label
+
+
+def get_running_experiment_header_summary(
+    session: Session,
+    now: datetime | None = None,
+) -> RunningExperimentHeaderSummary:
+    experiment = session.scalar(
+        select(Experiment)
+        .where(Experiment.status.in_(("RUNNING", "STOP_REQUESTED")))
+        .order_by(Experiment.started_at.desc())
+        .limit(1)
+    )
+    if experiment is None:
+        return RunningExperimentHeaderSummary(visible=False)
+
+    accounts = list(
+        session.scalars(
+            select(StrategyAccount).where(
+                StrategyAccount.experiment_id == experiment.id,
+                StrategyAccount.strategy_code.in_(ACTIVE_STRATEGY_CODES),
+            )
+        )
+    )
+    total = len(accounts)
+    active_positions = sum(1 for account in accounts if account.has_open_position)
+    armed_entries = sum(
+        1
+        for account in accounts
+        if not account.has_open_position and account.setup_status == "ARMED"
+    )
+    waiting = max(0, total - active_positions - armed_entries)
+
+    reference_time = now or datetime.now(timezone.utc)
+    countdown_seconds, countdown_label = _format_countdown(
+        experiment.next_analysis_at,
+        reference_time,
+    )
+
+    return RunningExperimentHeaderSummary(
+        visible=True,
+        experiment_id=experiment.id,
+        status=experiment.status,
+        status_tone=("stopping" if experiment.status == "STOP_REQUESTED" else "running"),
+        market=experiment.market,
+        market_label=_format_market_pair(experiment.market),
+        decision_timeframe=experiment.execution_timeframe,
+        decision_timeframe_label=_format_timeframe(experiment.execution_timeframe),
+        trend_timeframe=experiment.trend_timeframe,
+        trend_timeframe_label=_format_timeframe(experiment.trend_timeframe),
+        next_analysis_at=experiment.next_analysis_at,
+        next_analysis_countdown_seconds=countdown_seconds,
+        next_analysis_countdown_label=countdown_label,
+        last_market_update_at=experiment.last_market_update_at,
+        last_market_update_label=_format_utc_time(experiment.last_market_update_at),
+        strategy_summary={
+            "total": total,
+            "active_positions": active_positions,
+            "armed_entries": armed_entries,
+            "waiting": waiting,
+        },
+    )
 
 
 def create_experiment(

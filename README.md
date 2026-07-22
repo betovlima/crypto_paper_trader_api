@@ -1,4 +1,39 @@
-# Crypto Paper Trader API — v0.16.5
+# Crypto Paper Trader API — v0.16.9
+
+## v0.16.9 — server-calculated sticky header summary
+
+- Adds `GET /api/v1/experiments/running/header-summary`.
+- Calculates the running market label, decision cadence, trend-confirmation cadence, next-analysis countdown and last-update label in the API.
+- Calculates total, active-position, armed-entry and waiting strategy counts in the API.
+- Keeps presentation-only numeric aggregation out of the frontend header.
+- Returns `visible=false` when no experiment is running.
+
+## v0.16.8 — canonical LBR card name
+
+- Renames the public strategy display name to `Trend Resumption with LBR 3/10`.
+- Keeps `LBR_310_ANTI_CONTEXT` as the stable internal strategy code.
+- Clarifies that the UTC daily baseline is a Crypto Paper Trader context filter and not part of the original Anti setup.
+- Keeps the clean release safeguards introduced in v0.16.7.
+
+
+## v0.16.7 — safe release package and SQLite diagnostics
+
+- Keeps all LBR 3/10 Anti strategy behavior from v0.16.6.
+- Removes runtime SQLite database files from the release package.
+- Prevents stale `-wal` and `-shm` files from being paired with a different database after extraction.
+- Adds `python scripts/check_sqlite_health.py` for read-only integrity checks.
+- Adds a release-hygiene test that fails if a runtime database is committed.
+
+Important: never replace the local or Railway `data` directory when updating application code.
+
+## v0.16.6 — LBR 3/10 Anti with 24-hour crypto baseline
+
+- Adds Linda Bradford Raschke's 3/10 Anti as an independent long-only paper strategy.
+- Uses SMA(3) - SMA(10) and a 16-period SMA signal line.
+- Detects impulse, weak pullback, momentum hook and a later closed-candle breakout.
+- Reuses ignition, exhaustion, extension, spread, risk and expectancy-oriented controls.
+- Adapts opening/closing context to crypto with fixed UTC sessions: the completed previous 24-hour day and its final hour form the initial baseline; the current day's first hour is added after it closes.
+- Treats the UTC baseline only as a context filter, never as an entry signal.
 
 PAPER_ONLY FastAPI service for crypto strategy research with public MEXC Spot market data. The project contains no authenticated order, transfer, deposit or withdrawal implementation.
 

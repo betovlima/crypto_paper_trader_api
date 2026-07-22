@@ -11,6 +11,7 @@ from ...schemas import (
     ExperimentCreate,
     ExperimentHistoryResponse,
     ExperimentResponse,
+    RunningExperimentHeaderSummary,
     StopRunningExperimentRequest,
     StopRunningExperimentResponse,
 )
@@ -59,6 +60,13 @@ def list_experiment_history(
         end_date=end_date,
         sort_direction=sort_direction,
     )
+
+
+@router.get("/running/header-summary", response_model=RunningExperimentHeaderSummary)
+def get_running_experiment_header_summary(
+    session: Session = Depends(get_session),
+) -> RunningExperimentHeaderSummary:
+    return experiment_service.get_running_experiment_header_summary(session)
 
 
 @router.get("/{experiment_id}", response_model=ExperimentResponse)

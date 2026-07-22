@@ -107,6 +107,15 @@ def add_indicators(
     data["price_gap_ema_200"] = (close - data["ema_200"]) / safe_close
     data["atr_pct"] = data["atr_14"] / safe_close
 
+    # Linda Bradford Raschke 3/10 oscillator. Unlike classic MACD, the
+    # oscillator and signal line use simple moving averages.
+    data["sma_3"] = close.rolling(3, min_periods=3).mean()
+    data["sma_10"] = close.rolling(10, min_periods=10).mean()
+    data["lbr_310_fast"] = data["sma_3"] - data["sma_10"]
+    data["lbr_310_slow"] = data["lbr_310_fast"].rolling(16, min_periods=16).mean()
+    data["lbr_310_fast_slope"] = data["lbr_310_fast"].diff()
+    data["lbr_310_slow_slope"] = data["lbr_310_slow"].diff()
+
     # Context features use only the current and previously closed candles. The
     # reference medians are shifted by one row so the current range never changes
     # its own baseline. These features distinguish ignition after compression from
@@ -173,6 +182,12 @@ def add_indicators(
                 "ema_45",
                 "ema_50",
                 "ema_200",
+                "sma_3",
+                "sma_10",
+                "lbr_310_fast",
+                "lbr_310_slow",
+                "lbr_310_fast_slope",
+                "lbr_310_slow_slope",
                 "rsi_14",
                 "atr_14",
                 "adx_14",

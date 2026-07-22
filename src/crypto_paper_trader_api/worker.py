@@ -36,6 +36,7 @@ from .multi_strategy import (
     EmaPullbackStrategy,
     HybridComparisonStrategy,
     LarryVolatilityBreakoutStrategy,
+    Lbr310AntiContextStrategy,
     StormerFilhaMalCriadaStrategy,
     StrategyDecision,
 )
@@ -51,6 +52,7 @@ from .strategy_codes import (
     EMA9_CLASSIC_STRATEGY_CODES,
     EMA9_STRATEGY_CODES,
     LARRY_VOLATILITY_BREAKOUT,
+    LBR_310_ANTI_CONTEXT,
     LARRY_WILLIAMS_91_TREND_FOLLOWER,
     STORMER_FILHA_MAL_CRIADA,
     STRATEGY_DISPLAY_NAMES,
@@ -77,6 +79,7 @@ class TraderWorker:
         self.ema_pullback_strategy = EmaPullbackStrategy(settings)
         self.larry_volatility_strategy = LarryVolatilityBreakoutStrategy(settings)
         self.stormer_filha_mal_criada_strategy = StormerFilhaMalCriadaStrategy(settings)
+        self.lbr_310_anti_strategy = Lbr310AntiContextStrategy(settings)
         self.adaptive_selector = AdaptiveStrategySelector(settings)
         self.ema9_classic_strategy = Ema9Setup91Strategy(
             settings=settings, cost_aware=False, mode=Ema9Setup91Strategy.CLASSIC
@@ -654,6 +657,15 @@ class TraderWorker:
                     account=account,
                     current_row=execution_row,
                     previous_row=previous_row,
+                    trend_row=trend_row,
+                    costs=costs,
+                    profile=profile,
+                )
+            elif account.strategy_code == LBR_310_ANTI_CONTEXT:
+                decision = self.lbr_310_anti_strategy.decide(
+                    account=account,
+                    history=execution_indicators,
+                    current_index=current_index,
                     trend_row=trend_row,
                     costs=costs,
                     profile=profile,

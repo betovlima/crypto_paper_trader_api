@@ -16,6 +16,7 @@ from .strategy_codes import (
     ADAPTIVE_STRATEGY_SELECTOR,
     DYNAMIC_RISK_STRATEGY_CODES,
     EMA9_STRATEGY_CODES,
+    SETUP_STATE_STRATEGY_CODES,
 )
 from .trading_profiles import TradingProfile
 
@@ -188,7 +189,7 @@ class MultiStrategyPaperBroker:
             account.selector_position_strategy_spec_json = account.selector_strategy_spec_json
             account.selector_position_validation_score = account.selector_validation_score
             account.selector_position_opened_at = executed_at
-        if account.strategy_code in EMA9_STRATEGY_CODES:
+        if account.strategy_code in SETUP_STATE_STRATEGY_CODES:
             account.setup_status = "IN_POSITION"
             account.exit_trigger_price = None
             account.exit_trigger_candle_timestamp = None
@@ -333,7 +334,7 @@ class MultiStrategyPaperBroker:
         account.stop_loss_price = None
         account.take_profit_price = None
         account.trailing_stop_price = None
-        if account.strategy_code in EMA9_STRATEGY_CODES:
+        if account.strategy_code in SETUP_STATE_STRATEGY_CODES:
             account.setup_status = "IDLE"
             account.setup_candle_timestamp = None
             account.setup_candle_high = None
