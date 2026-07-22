@@ -415,6 +415,9 @@ class StrategyAccount(Base):
     entry_execution_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     entry_fee_paid: Mapped[float] = mapped_column(Float, default=0.0)
     entry_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    entry_candle_timestamp: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     initial_risk_per_unit: Mapped[float | None] = mapped_column(Float, nullable=True)
     highest_price_since_entry: Mapped[float | None] = mapped_column(Float, nullable=True)
     stop_loss_price: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -560,6 +563,7 @@ class StrategyAccount(Base):
             "entry_execution_price": self.entry_execution_price,
             "entry_fee_paid": self.entry_fee_paid,
             "entry_time": self.entry_time,
+            "entry_candle_timestamp": self.entry_candle_timestamp,
             "stop_loss_price": self.stop_loss_price,
             "take_profit_price": self.take_profit_price,
             "trailing_stop_price": self.trailing_stop_price,
@@ -866,6 +870,9 @@ class StrategySimulatedTrade(Base):
         ForeignKey("strategy_decision_snapshots.id", ondelete="SET NULL"), nullable=True
     )
     executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    entry_candle_timestamp: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     side: Mapped[str] = mapped_column(String(8))
     order_role: Mapped[str] = mapped_column(String(16), default="TAKER")
     market_price: Mapped[float] = mapped_column(Float)

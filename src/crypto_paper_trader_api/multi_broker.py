@@ -77,6 +77,7 @@ class MultiStrategyPaperBroker:
         executed_at: datetime,
         reason: str,
         decision_id: int | None,
+        entry_candle_timestamp: datetime | None = None,
         stop_override: float | None = None,
         take_profit_override: float | None = None,
         profile: TradingProfile | None = None,
@@ -168,6 +169,7 @@ class MultiStrategyPaperBroker:
         account.entry_execution_price = execution_price
         account.entry_fee_paid = fee
         account.entry_time = executed_at
+        account.entry_candle_timestamp = entry_candle_timestamp or executed_at
         account.initial_risk_per_unit = max(execution_price - stop_loss_price, 0.0)
         account.break_even_activated = False
         account.highest_price_since_entry = mid_market_price
@@ -206,6 +208,7 @@ class MultiStrategyPaperBroker:
             ),
             decision_id=decision_id,
             executed_at=executed_at,
+            entry_candle_timestamp=entry_candle_timestamp or executed_at,
             side="BUY",
             order_role="TAKER",
             market_price=mid_market_price,
@@ -323,6 +326,7 @@ class MultiStrategyPaperBroker:
         account.entry_execution_price = None
         account.entry_fee_paid = 0.0
         account.entry_time = None
+        account.entry_candle_timestamp = None
         account.initial_risk_per_unit = None
         account.break_even_activated = False
         account.highest_price_since_entry = None

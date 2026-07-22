@@ -1,4 +1,4 @@
-# Crypto Paper Trader API — v0.15.1
+# Crypto Paper Trader API — v0.16.4
 
 PAPER_ONLY FastAPI service for crypto strategy research with public MEXC Spot market data. The project contains no authenticated order, transfer, deposit or withdrawal implementation.
 
@@ -151,6 +151,16 @@ Never put `ADMIN_API_KEY` or `OPENAI_API_KEY` in the frontend or in any `VITE_*`
 All executions are simulated. Public MEXC data is used for analysis, and the adaptive researcher cannot submit exchange orders.
 
 
+
+## v0.16.4 — closed-candle entry confirmation and candle attribution
+
+- Requires the Larry Williams 9.1 setup candle to close bullish above EMA 9 after a strict down-to-up turn.
+- Requires a later bullish candle to close above the setup high; intrabar wick-only breakouts remain on HOLD.
+- Moves both Larry 9.1 entries to the closed-candle execution path.
+- Adds body-quality, close-confirmation and maximum-extension filters to the other rule-based strategies.
+- Applies equivalent safeguards to generated adaptive strategy families.
+- Persists the candle timestamp that produced every simulated entry.
+
 ## 0.15.1 - Hybrid OpenAI research and local quantitative validation
 
 - Uses strict Structured Outputs for web-researched strategy specifications.
@@ -160,6 +170,15 @@ All executions are simulated. Public MEXC data is used for analysis, and the ada
 - Sends `store=false` in OpenAI Responses API requests.
 
 
+
+## v0.16.4 — stricter entry confirmation and entry-candle timestamp
+
+- Stores the candle opening timestamp that produced each simulated entry.
+- Requires a strict bullish EMA 9 reversal candle that closes above EMA 9 before Setup 9.1 is armed.
+- Expires stale EMA 9 setups and requires a later bullish candle to close above the trigger without excessive extension.
+- Adds candle-body, close confirmation and maximum-extension filters to EMA crossover, EMA pullback, volatility breakout, Stormer and hybrid entries.
+- Applies the same entry-quality principles to generated adaptive strategies and their backtests.
+- Keeps AI Pattern Trader probability, expected-return and deterministic risk gates unchanged.
 
 ## v0.16.3 — persist all ten ranked scanner markets
 

@@ -50,6 +50,7 @@ def test_broker_uses_ask_and_bid_without_adding_spread_twice() -> None:
         session.add(account)
         session.flush()
 
+        entry_candle_timestamp = datetime(2026, 7, 22, 10, 0, tzinfo=timezone.utc)
         buy = broker.buy(
             session=session,
             experiment=experiment,
@@ -61,9 +62,13 @@ def test_broker_uses_ask_and_bid_without_adding_spread_twice() -> None:
             executed_at=datetime.now(timezone.utc),
             reason="test",
             decision_id=None,
+            entry_candle_timestamp=entry_candle_timestamp,
         )
 
         assert buy.execution_price == 100.05 * 1.0005
+        assert buy.entry_candle_timestamp == entry_candle_timestamp
+        assert account.entry_candle_timestamp == entry_candle_timestamp
+        assert account.to_public_dict()["entry_candle_timestamp"] == entry_candle_timestamp
         assert buy.spread_cost > 0
         assert buy.slippage_cost > 0
 

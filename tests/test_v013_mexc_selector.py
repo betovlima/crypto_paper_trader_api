@@ -69,8 +69,8 @@ def costs() -> ExecutionCosts:
 def test_ema_pullback_and_larry_breakout_can_emit_intraday_buy() -> None:
     settings = Settings(_env_file=None)
     profile = get_trading_profile(BALANCED_INTRADAY)
-    current = row(low=100.7)
-    previous = row(close=101.5)
+    current = row(low=100.7, close=103.5, high=104.0)
+    previous = row(close=103.0)
     trend = row(close=105.0, ema_9=103.0, ema_21=101.0, ema_50=99.0)
 
     pullback = EmaPullbackStrategy(settings).decide(

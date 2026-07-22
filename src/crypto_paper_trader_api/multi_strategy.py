@@ -84,6 +84,27 @@ def _ema(row: pd.Series, period: int) -> float:
     return float(row[f"ema_{period}"])
 
 
+def _candle_body_atr(row: pd.Series, atr: float) -> float:
+    return abs(float(row["close"]) - float(row["open"])) / max(atr, 1e-12)
+
+
+def _bullish_confirmation(row: pd.Series, atr: float, minimum_body_atr: float) -> bool:
+    return (
+        float(row["close"]) > float(row["open"])
+        and _candle_body_atr(row, atr) >= minimum_body_atr
+    )
+
+
+def _not_overextended(
+    close: float,
+    reference_price: float,
+    atr: float,
+    maximum_extension_atr: float,
+) -> bool:
+    extension = close - reference_price
+    return 0.0 <= extension <= max(atr, 1e-12) * maximum_extension_atr
+
+
 def _risk_levels(
     close: float,
     atr: float,
@@ -107,6 +128,9 @@ class HybridComparisonStrategy:
     They are applied later by the paper broker and reported as execution costs.
     """
 
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
     def decide(
         self,
         account: StrategyAccount,
@@ -120,6 +144,7 @@ class HybridComparisonStrategy:
         active_profile = profile or get_trading_profile(None)
         close = float(execution_row["close"])
         high = float(execution_row["high"])
+        open_price = float(execution_row["open"])
         low = float(execution_row["low"])
         atr = float(execution_row["atr_14"])
         fast = _ema(execution_row, active_profile.fast_ema_period)
@@ -166,6 +191,13 @@ class HybridComparisonStrategy:
             account.cooldown_until and self._as_utc(account.cooldown_until) > self._as_utc(now)
         )
         stop, target, target_pct = _risk_levels(close, atr, active_profile)
+        bullish_entry_candle = _bullish_confirmation(
+            execution_row, atr, self.settings.entry_min_body_atr
+        )
+        close_above_fast = close > fast
+        entry_not_overextended = _not_overextended(
+            close, fast, atr, self.settings.entry_max_extension_atr
+        )
 
         reasons = [
             f"profile={active_profile.code}",
@@ -174,6 +206,10 @@ class HybridComparisonStrategy:
             f"bearish_confirmations={bearish_count}/4",
             f"model_probability_up={prediction.upward_probability:.4f}",
             f"expected_return={prediction.expected_return:.6f}",
+            f"bullish_entry_candle={str(bullish_entry_candle).lower()}",
+            f"entry_body_atr={_candle_body_atr(execution_row, atr):.6f}",
+            f"close_above_fast_ema={str(close_above_fast).lower()}",
+            f"entry_not_overextended={str(entry_not_overextended).lower()}",
             "fees_are_accounting_only=true",
             f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
         ]
@@ -272,6 +308,9 @@ class HybridComparisonStrategy:
                 technical_signal == "BUY",
                 prediction.upward_probability >= active_profile.buy_probability_threshold,
                 prediction.model_signal == "BUY",
+                bullish_entry_candle,
+                close_above_fast,
+                entry_not_overextended,
                 atr > 0,
             ]
         )
@@ -310,6 +349,9 @@ class HybridComparisonStrategy:
 class EmaCrossoverStrategy:
     """Fresh fast/slow EMA crossover with technical confirmations only."""
 
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
     def decide(
         self,
         account: StrategyAccount,
@@ -320,7 +362,7 @@ class EmaCrossoverStrategy:
         profile: TradingProfile,
     ) -> StrategyDecision:
         close = float(current_row["close"])
-        atr = float(current_row["atr_14"])
+        atr = max(float(current_row["atr_14"]), 1e-12)
         fast = _ema(current_row, profile.fast_ema_period)
         slow = _ema(current_row, profile.slow_ema_period)
         regime = _ema(current_row, profile.regime_ema_period)
@@ -333,6 +375,13 @@ class EmaCrossoverStrategy:
         crossed_up = previous_fast <= previous_slow and fast > slow
         crossed_down = previous_fast >= previous_slow and fast < slow
         stop, target, potential_return = _risk_levels(close, atr, profile)
+        bullish_entry_candle = _bullish_confirmation(
+            current_row, atr, self.settings.entry_min_body_atr
+        )
+        close_above_cross = close > max(fast, slow)
+        entry_not_overextended = _not_overextended(
+            close, fast, atr, self.settings.entry_max_extension_atr
+        )
 
         checks = {
             "fresh_fast_slow_cross": crossed_up,
@@ -345,6 +394,9 @@ class EmaCrossoverStrategy:
             "rsi_confirmed": profile.rsi_buy_min
             <= float(current_row["rsi_14"])
             <= profile.rsi_buy_max,
+            "bullish_entry_candle": bullish_entry_candle,
+            "close_above_cross": close_above_cross,
+            "entry_not_overextended": entry_not_overextended,
         }
         confirmations = sum(checks.values())
         reasons = [
@@ -352,7 +404,8 @@ class EmaCrossoverStrategy:
             f"ema_periods={profile.fast_ema_period}/{profile.slow_ema_period}/{profile.regime_ema_period}",
             f"crossed_up={crossed_up}",
             f"crossed_down={crossed_down}",
-            f"confirmations={confirmations}/7",
+            f"confirmations={confirmations}/10",
+            f"entry_body_atr={_candle_body_atr(current_row, atr):.6f}",
             f"technical_target_return={potential_return:.6f}",
             "fees_are_accounting_only=true",
             f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
@@ -414,18 +467,30 @@ class EmaPullbackStrategy:
         slow = _ema(current_row, profile.slow_ema_period)
         regime = _ema(current_row, profile.regime_ema_period)
         previous_close = float(previous_row["close"])
+        previous_fast = _ema(previous_row, profile.fast_ema_period)
         trend_fast = _ema(trend_row, profile.fast_ema_period)
         trend_slow = _ema(trend_row, profile.slow_ema_period)
         trend_regime = _ema(trend_row, profile.regime_ema_period)
 
         touch_buffer = atr * self.settings.ema_pullback_touch_atr
-        touched_fast_or_slow = low <= max(fast, slow) + touch_buffer
+        touch_zone_low = slow - touch_buffer
+        touch_zone_high = fast + touch_buffer
+        touched_fast_or_slow = low <= touch_zone_high and float(current_row["high"]) >= touch_zone_low
         bullish_structure = fast > slow > regime
         trend_bullish = (
             trend_fast > trend_slow
             and float(trend_row["close"]) > trend_regime
         )
-        bullish_rejection = close > open_price and close > fast and close >= previous_close
+        bullish_rejection = (
+            _bullish_confirmation(current_row, atr, self.settings.entry_min_body_atr)
+            and close > fast
+            and close >= previous_close
+            and close - low >= float(current_row["high"]) - close
+        )
+        pullback_started_above_fast = previous_close >= previous_fast
+        entry_not_overextended = _not_overextended(
+            close, fast, atr, min(self.settings.entry_max_extension_atr, 0.90)
+        )
         adx_ok = float(current_row["adx_14"]) >= profile.adx_min
         volume_ok = float(current_row["relative_volume"]) >= profile.relative_volume_min
         rsi_ok = profile.rsi_buy_min <= float(current_row["rsi_14"]) <= profile.rsi_buy_max
@@ -434,6 +499,8 @@ class EmaPullbackStrategy:
             "bullish_trend_timeframe": trend_bullish,
             "pulled_back_to_ema": touched_fast_or_slow,
             "bullish_rejection_close": bullish_rejection,
+            "pullback_started_above_fast": pullback_started_above_fast,
+            "entry_not_overextended": entry_not_overextended,
             "adx_confirmed": adx_ok,
             "volume_confirmed": volume_ok,
             "rsi_confirmed": rsi_ok,
@@ -451,7 +518,9 @@ class EmaPullbackStrategy:
             f"trend_bullish={trend_bullish}",
             f"pulled_back_to_ema={touched_fast_or_slow}",
             f"bullish_rejection={bullish_rejection}",
-            f"confirmations={confirmations}/7",
+            f"confirmations={confirmations}/9",
+            f"entry_body_atr={_candle_body_atr(current_row, atr):.6f}",
+            f"touch_zone={touch_zone_low:.8f}-{touch_zone_high:.8f}",
             f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
         ]
 
@@ -576,7 +645,14 @@ class StormerFilhaMalCriadaStrategy:
             trigger = float(account.entry_trigger_price)
             setup_time = account.setup_candle_timestamp
             different_candle = setup_time is None or timestamp > setup_time
-            if different_candle and high >= trigger:
+            breakout_confirmed = (
+                different_candle
+                and high >= trigger
+                and close >= trigger
+                and _bullish_confirmation(current_row, atr, self.settings.entry_min_body_atr)
+                and close - trigger <= atr * self.settings.entry_max_extension_atr
+            )
+            if breakout_confirmed:
                 stop = float(account.initial_setup_stop_price or (emas[50] - stop_buffer))
                 risk = max(trigger - stop, tick_buffer)
                 target = trigger + 3.0 * risk
@@ -584,7 +660,11 @@ class StormerFilhaMalCriadaStrategy:
                 account.setup_target_price = target
                 account.last_setup_event = "BREAKOUT_ENTRY"
                 account.last_setup_event_reason = "Price broke above the armed pullback candle high."
-                reasons.append(f"entry_triggered={trigger:.8f}")
+                reasons.extend([
+                    f"entry_triggered={trigger:.8f}",
+                    "breakout_closed_above_trigger=true",
+                    f"entry_body_atr={_candle_body_atr(current_row, atr):.6f}",
+                ])
                 return StrategyDecision(
                     "BUY", "NOT_USED", "BUY", confirmations, "; ".join(reasons), trigger,
                     setup_status="TRIGGERED", potential_target_price=target,
@@ -605,7 +685,7 @@ class StormerFilhaMalCriadaStrategy:
                 account.last_setup_event_reason = "The pullback continued, so the buy-stop was moved above the latest candle."
                 reasons.append("armed_trigger_updated_after_deeper_pullback")
             else:
-                reasons.append("waiting_for_breakout_above_armed_trigger")
+                reasons.append("waiting_for_closed_bullish_breakout_above_armed_trigger")
             return StrategyDecision("HOLD", "NOT_USED", "HOLD", confirmations, "; ".join(reasons), setup_status="ARMED", potential_target_price=account.setup_target_price, reward_risk_ratio=3.0, stop_loss_override=account.initial_setup_stop_price, take_profit_override=account.setup_target_price)
 
         if aligned and slopes_up and trend_aligned and price_above_longest and deepest_touched is not None:
@@ -662,7 +742,13 @@ class LarryVolatilityBreakoutStrategy:
             and _ema(trend_row, profile.fast_ema_period) > _ema(trend_row, profile.slow_ema_period)
         )
         price_above_regime = close > _ema(current_row, profile.regime_ema_period)
-        breakout = high >= trigger and close >= trigger
+        breakout_buffer = atr * self.settings.breakout_close_buffer_atr
+        breakout = high >= trigger and close >= trigger + breakout_buffer
+        bullish_breakout_candle = _bullish_confirmation(
+            current_row, atr, self.settings.entry_min_body_atr
+        )
+        close_near_high = close >= high - max((high - float(current_row["low"])) * 0.30, 1e-12)
+        entry_not_overextended = close - trigger <= atr * self.settings.entry_max_extension_atr
         volume_ok = float(current_row["relative_volume"]) >= profile.relative_volume_min
         adx_ok = float(current_row["adx_14"]) >= profile.adx_min
         checks = {
@@ -671,6 +757,9 @@ class LarryVolatilityBreakoutStrategy:
             "price_above_regime": price_above_regime,
             "volume_confirmed": volume_ok,
             "adx_confirmed": adx_ok,
+            "bullish_breakout_candle": bullish_breakout_candle,
+            "close_near_high": close_near_high,
+            "entry_not_overextended": entry_not_overextended,
         }
         confirmations = sum(checks.values())
         stop = close - self.settings.larry_breakout_stop_atr * atr
@@ -684,7 +773,9 @@ class LarryVolatilityBreakoutStrategy:
             f"reference_range={reference_range:.8f}",
             f"breakout_trigger={trigger:.8f}",
             f"breakout={breakout}",
-            f"confirmations={confirmations}/5",
+            f"confirmations={confirmations}/8",
+            f"breakout_buffer={breakout_buffer:.8f}",
+            f"entry_body_atr={_candle_body_atr(current_row, atr):.6f}",
             f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
         ]
 
@@ -963,6 +1054,8 @@ class Ema9Setup91Strategy:
         close = float(current_row["close"])
         high = float(current_row["high"])
         low = float(current_row["low"])
+        open_price = float(current_row["open"])
+        atr = max(float(current_row["atr_14"]), 1e-12)
         ema9 = float(current_row["ema_9"])
         ema9_prev = float(previous_row["ema_9"])
         ema9_prev2 = float(previous_previous_row["ema_9"])
@@ -988,6 +1081,7 @@ class Ema9Setup91Strategy:
             f"previous_slope={previous_slope:.8f}",
             f"current_slope={current_slope:.8f}",
             f"candle_crossed_ema9={str(candle_crossed_ema9).lower()}",
+            f"entry_body_atr={_candle_body_atr(current_row, atr):.6f}",
             "fees_are_accounting_only=true",
             f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
         ]
@@ -1129,7 +1223,72 @@ class Ema9Setup91Strategy:
         self._clear_classic_exit_trigger(account)
 
         if account.setup_status == "ARMED":
-            # A pending 9.1 entry is valid only while EMA 9 is still clearly rising.
+            # The original stop-entry is adapted to closed-candle confirmation. A wick above
+            # the trigger is not enough: the later candle must close above it with a bullish
+            # body and without being excessively extended from the trigger.
+            trigger = float(account.entry_trigger_price or 0.0)
+            setup_timestamp = account.setup_candle_timestamp
+            different_candle = setup_timestamp is None or self._as_utc(now) > self._as_utc(setup_timestamp)
+            confirmed_breakout = (
+                different_candle
+                and trigger > 0
+                and high >= trigger
+                and close >= trigger
+                and _bullish_confirmation(
+                    current_row, atr, self.settings.entry_min_body_atr if self.settings else 0.08
+                )
+                and close - trigger <= atr * (
+                    self.settings.entry_max_extension_atr if self.settings else 1.25
+                )
+            )
+            if confirmed_breakout:
+                account.setup_status = "TRIGGERED"
+                account.last_setup_event = "CLOSED_CANDLE_BREAKOUT_ENTRY"
+                account.last_setup_event_reason = (
+                    "A later bullish candle closed above the EMA 9 setup trigger."
+                )
+                reasons.extend(
+                    [
+                        f"closed_candle_breakout_trigger={trigger:.8f}",
+                        f"breakout_close={close:.8f}",
+                        "breakout_confirmed_on_closed_candle=true",
+                    ]
+                )
+                return StrategyDecision(
+                    "BUY",
+                    "NOT_USED",
+                    "BUY",
+                    1,
+                    "; ".join(reasons),
+                    execution_reference_price=close,
+                    setup_status="TRIGGERED",
+                    stop_loss_override=account.initial_setup_stop_price,
+                    take_profit_override=None,
+                )
+            if different_candle and high >= trigger and close < trigger:
+                account.last_setup_event = "FALSE_BREAKOUT"
+                account.last_setup_event_reason = (
+                    "Price crossed the trigger intrabar but the candle did not close above it."
+                )
+                reasons.append("intrabar_breakout_rejected_without_close_confirmation")
+
+            # A pending 9.1 entry is valid only while EMA 9 is still clearly rising
+            # and while the setup remains recent enough to represent the same reversal.
+            setup_age_hours = (
+                (self._as_utc(now) - self._as_utc(account.setup_candle_timestamp)).total_seconds() / 3600
+                if account.setup_candle_timestamp is not None
+                else 0.0
+            )
+            if setup_age_hours > (self.settings.ema9_setup_max_age_hours if self.settings else 4.0):
+                account.setup_status = "CANCELLED"
+                account.setup_cancel_reason = "The EMA 9 breakout did not occur before the setup expired."
+                account.last_setup_event = "SETUP_EXPIRED"
+                account.last_setup_event_reason = account.setup_cancel_reason
+                reasons.append(f"armed_setup_expired_after_hours={setup_age_hours:.2f}")
+                return StrategyDecision(
+                    "CANCELLED", "NOT_USED", "HOLD", 0, "; ".join(reasons),
+                    setup_status="CANCELLED",
+                )
             if current_slope <= epsilon:
                 account.setup_status = "CANCELLED"
                 account.setup_cancel_reason = (
@@ -1159,7 +1318,16 @@ class Ema9Setup91Strategy:
             )
 
         strict_reversal = previous_slope < -epsilon and current_slope > epsilon
-        reversal_detected = strict_reversal and candle_crossed_ema9
+        bullish_setup_candle = _bullish_confirmation(
+            current_row, atr, self.settings.entry_min_body_atr if self.settings else 0.08
+        )
+        closed_above_ema9 = close > ema9
+        reversal_detected = (
+            strict_reversal
+            and candle_crossed_ema9
+            and bullish_setup_candle
+            and closed_above_ema9
+        )
         if not reversal_detected:
             if account.setup_status not in {"CANCELLED", "MISSED_ENTRY", "REJECTED"}:
                 account.setup_status = "IDLE"
@@ -1169,6 +1337,16 @@ class Ema9Setup91Strategy:
                     "EMA 9 turned up, but the reversal candle did not cross the average."
                 )
                 reasons.append("strict_reversal_without_ema9_cross")
+            elif strict_reversal and not bullish_setup_candle:
+                account.last_setup_event_reason = (
+                    "EMA 9 turned up, but the setup candle did not have a sufficiently bullish body."
+                )
+                reasons.append("strict_reversal_without_bullish_setup_candle")
+            elif strict_reversal and not closed_above_ema9:
+                account.last_setup_event_reason = (
+                    "EMA 9 turned up, but the setup candle did not close above the average."
+                )
+                reasons.append("strict_reversal_without_close_above_ema9")
             else:
                 account.last_setup_event_reason = (
                     "EMA 9 has not completed a strict down-to-up turn on closed candles."
@@ -1194,6 +1372,8 @@ class Ema9Setup91Strategy:
             [
                 "strict_ema9_down_to_up_reversal_detected",
                 "setup_candle_crossed_ema9=true",
+                "setup_candle_bullish=true",
+                "setup_candle_closed_above_ema9=true",
                 f"entry_trigger={trigger:.8f}",
                 f"initial_stop={stop:.8f}",
                 f"risk_pct={(risk / trigger if trigger > 0 else 0.0):.6f}",
@@ -1240,3 +1420,10 @@ class Ema9Setup91Strategy:
             stop_loss_override=stop,
             take_profit_override=None,
         )
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+

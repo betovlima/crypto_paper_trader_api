@@ -38,15 +38,15 @@ ACTIVE_STRATEGY_CODES = (
 
 STRATEGY_DISPLAY_NAMES = {
     ADAPTIVE_STRATEGY_SELECTOR: "Adaptive Strategy Selector",
-    CURRENT_HYBRID: "Profile-Aware Hybrid",
-    EMA_CROSSOVER: "EMA Crossover",
-    EMA_PULLBACK: "EMA Pullback",
-    EMA9_SETUP_91: "Larry Williams 9.1 Classic",
-    LARRY_WILLIAMS_91_CLASSIC: "Larry Williams 9.1 Classic",
-    LARRY_WILLIAMS_91_TREND_FOLLOWER: "Larry Williams 9.1 Trend Follower",
-    LARRY_VOLATILITY_BREAKOUT: "Larry Volatility Breakout",
-    STORMER_FILHA_MAL_CRIADA: "Stormer Filha Mal Criada",
-    AI_PATTERN_TRADER: "AI Pattern Trader",
+    CURRENT_HYBRID: "Trend, Momentum, Volume and AI Confirmation",
+    EMA_CROSSOVER: "Fast and Slow Exponential Average Crossover",
+    EMA_PULLBACK: "Pullback to Exponential Moving Averages",
+    EMA9_SETUP_91: "EMA 9 Reversal and Price Breakout",
+    LARRY_WILLIAMS_91_CLASSIC: "EMA 9 Reversal and Price Breakout",
+    LARRY_WILLIAMS_91_TREND_FOLLOWER: "EMA 9 Reversal with Trailing Stop",
+    LARRY_VOLATILITY_BREAKOUT: "Volatility Range Breakout",
+    STORMER_FILHA_MAL_CRIADA: "Seven-EMA Trend Pullback (Stormer)",
+    AI_PATTERN_TRADER: "AI Candle Pattern Recognition",
     BUY_AND_HOLD: "Buy and Hold",
 }
 
@@ -71,14 +71,16 @@ STRATEGY_DESCRIPTIONS = {
         "confirmation."
     ),
     LARRY_WILLIAMS_91_CLASSIC: (
-        "Classic Setup 9.1: EMA 9 must turn strictly from down to up on a candle that crosses "
-        "the average. Entry is above that candle's high and the initial stop is at its low. "
-        "After entry, a down-turn candle arms an exit below its low."
+        "Classic Setup 9.1: EMA 9 must turn strictly from down to up on a bullish closed candle "
+        "that crosses and closes above the average. A later bullish candle must close above "
+        "the setup high; a wick-only touch or crossing is rejected. The initial stop remains "
+        "at the setup candle low. After entry, a down-turn candle arms an exit below its low."
     ),
     LARRY_WILLIAMS_91_TREND_FOLLOWER: (
-        "Adapted Setup 9.1 with the same strict reversal entry. After entry, the protective "
-        "stop follows the low of each newly closed candle, never moves down, and exits on the "
-        "stop or a bearish EMA 9 reversal."
+        "Adapted Setup 9.1 with the same strict EMA 9 reversal and later closed-candle breakout "
+        "confirmation. A wick-only crossing does not enter. After entry, the protective stop "
+        "follows the low of each newly closed candle, never moves down, and exits on the stop "
+        "or a bearish EMA 9 reversal."
     ),
     LARRY_VOLATILITY_BREAKOUT: (
         "Intraday volatility breakout inspired by Larry Williams. It compares the current "
@@ -107,6 +109,8 @@ EMA9_CLASSIC_STRATEGY_CODES = {EMA9_SETUP_91, LARRY_WILLIAMS_91_CLASSIC}
 EMA9_TREND_FOLLOWER_STRATEGY_CODES = {LARRY_WILLIAMS_91_TREND_FOLLOWER}
 DIRECT_ENTRY_STRATEGY_CODES = {
     CURRENT_HYBRID,
+    LARRY_WILLIAMS_91_CLASSIC,
+    LARRY_WILLIAMS_91_TREND_FOLLOWER,
     EMA_CROSSOVER,
     EMA_PULLBACK,
     LARRY_VOLATILITY_BREAKOUT,

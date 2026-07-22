@@ -72,8 +72,8 @@ class TraderWorker:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.client = MEXCPublicClient(settings)
-        self.hybrid_strategy = HybridComparisonStrategy()
-        self.ema_crossover_strategy = EmaCrossoverCostAwareStrategy()
+        self.hybrid_strategy = HybridComparisonStrategy(settings)
+        self.ema_crossover_strategy = EmaCrossoverCostAwareStrategy(settings)
         self.ema_pullback_strategy = EmaPullbackStrategy(settings)
         self.larry_volatility_strategy = LarryVolatilityBreakoutStrategy(settings)
         self.stormer_filha_mal_criada_strategy = StormerFilhaMalCriadaStrategy(settings)
@@ -278,67 +278,8 @@ class TraderWorker:
                     account.last_event = exit_reason
                     account.last_status_message = self._event_message(exit_reason)
 
-            if (
-                not account.has_open_position
-                and account.strategy_code in EMA9_STRATEGY_CODES
-                and account.setup_status == "ARMED"
-                and account.entry_trigger_price is not None
-                and best_ask >= account.entry_trigger_price
-                and account.id not in live_action_accounts
-            ):
-                blocked_reason = self._entry_block_reason(
-                    account=account,
-                    best_bid=best_bid,
-                    costs=costs,
-                    now=now,
-                    profile=profile,
-                )
-                if blocked_reason:
-                    self._reject_armed_setup(account, blocked_reason)
-                    events[account.strategy_code] = (
-                        "LIVE_ENTRY_REJECTED",
-                        blocked_reason,
-                    )
-                    continue
-
-                latest_decision = session.scalar(
-                    select(StrategyDecisionSnapshot)
-                    .where(
-                        StrategyDecisionSnapshot.strategy_account_id == account.id,
-                        StrategyDecisionSnapshot.setup_status == "ARMED",
-                    )
-                    .order_by(StrategyDecisionSnapshot.candle_timestamp.desc())
-                    .limit(1)
-                )
-                self.broker.buy(
-                    session=session,
-                    experiment=experiment,
-                    account=account,
-                    mid_market_price=market_price,
-                    best_ask=best_ask,
-                    atr=float(account.last_atr_14 or 0.0),
-                    costs=costs,
-                    executed_at=now,
-                    reason="EMA9 setup breakout reached during 15-second monitoring.",
-                    decision_id=latest_decision.id if latest_decision else None,
-                    stop_override=account.initial_setup_stop_price,
-                    take_profit_override=account.setup_target_price,
-                    profile=profile,
-                )
-                if latest_decision:
-                    latest_decision.action_executed = True
-                    latest_decision.final_signal = "BUY"
-                    latest_decision.execution_reference_price = best_ask
-                    latest_decision.decision_reason = (
-                        latest_decision.decision_reason + "; live_breakout_triggered"
-                    )
-                live_action_accounts.add(account.id)
-                events[account.strategy_code] = (
-                    "LIVE_ENTRY_TRIGGER",
-                    "The EMA9 setup breakout triggered a simulated purchase.",
-                )
-                account.last_event = "LIVE_ENTRY_TRIGGER"
-                account.last_status_message = events[account.strategy_code][1]
+            # EMA 9 entries are confirmed only after a candle closes above the trigger.
+            # Live monitoring remains responsible for protective exits, not new entries.
 
         analysis_due = self._analysis_is_due(experiment=experiment, now=now)
         if analysis_due:
@@ -641,46 +582,6 @@ class TraderWorker:
                             "A missed historical exit was reconstructed from closed candles.",
                         )
 
-                if (
-                    not account.has_open_position
-                    and account.strategy_code in EMA9_STRATEGY_CODES
-                    and account.setup_status == "ARMED"
-                    and account.entry_trigger_price is not None
-                    and float(execution_row["high"]) >= account.entry_trigger_price
-                ):
-                    trigger = float(account.entry_trigger_price)
-                    historical_entry = max(float(execution_row["open"]), trigger)
-                    self.broker.buy(
-                        session=session,
-                        experiment=experiment,
-                        account=account,
-                        mid_market_price=historical_entry,
-                        best_ask=historical_entry,
-                        atr=atr,
-                        costs=costs,
-                        executed_at=candle_timestamp,
-                        reason="Recovered Larry Williams 9.1 breakout from a missed candle.",
-                        decision_id=None,
-                        stop_override=account.initial_setup_stop_price,
-                        take_profit_override=None,
-                        profile=profile,
-                        is_recovered=True,
-                        recovery_note=(
-                            "Entry reconstructed at the setup trigger/open gap. Intrabar order "
-                            "cannot be known exactly from closed OHLC data."
-                        ),
-                    )
-                    account.last_setup_event = "RECOVERED_BREAKOUT_ENTRY"
-                    account.last_setup_event_reason = (
-                        "The paper entry was reconstructed after downtime; no late live purchase "
-                        "was made at the current price."
-                    )
-                    recovered_trade_count += 1
-                    recovered_action_accounts.add(account.id)
-                    events[account.strategy_code] = (
-                        "RECOVERED_ENTRY",
-                        "A missed Setup 9.1 breakout was reconstructed as a paper trade.",
-                    )
 
         # Evaluate all specialist candidates first. The selector receives the same
         # chronologically valid closed candle and cannot see future data.
@@ -926,6 +827,7 @@ class TraderWorker:
                             executed_at=candle_end,
                             reason=decision.reason,
                             decision_id=snapshot.id,
+                            entry_candle_timestamp=candle_timestamp,
                             stop_override=decision.stop_loss_override,
                             take_profit_override=decision.take_profit_override,
                             profile=profile,
@@ -1701,6 +1603,13 @@ class TraderWorker:
             seconds=TIMEFRAME_SECONDS[experiment.execution_timeframe]
         )
         return candle_end > self._as_utc(experiment.started_at)
+
+    @staticmethod
+    def _current_candle_start(now: datetime, timeframe: str) -> datetime:
+        seconds = TIMEFRAME_SECONDS[timeframe]
+        epoch = int(TraderWorker._as_utc(now).timestamp())
+        candle_epoch = (epoch // seconds) * seconds
+        return datetime.fromtimestamp(candle_epoch, tz=timezone.utc)
 
     @staticmethod
     def _next_boundary(now: datetime, timeframe: str) -> datetime:

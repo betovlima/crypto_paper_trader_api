@@ -82,6 +82,7 @@ def _migrate_additive_columns() -> None:
             "entry_market_price": "FLOAT",
             "entry_execution_price": "FLOAT",
             "entry_fee_paid": "FLOAT NOT NULL DEFAULT 0",
+            "entry_candle_timestamp": "DATETIME",
             "last_setup_event": "VARCHAR(64)",
             "last_setup_event_reason": "TEXT",
             "stop_management_mode": "VARCHAR(32) NOT NULL DEFAULT 'N/A'",
@@ -209,6 +210,7 @@ def _migrate_additive_columns() -> None:
         },
         "strategy_simulated_trades": {
             "selected_strategy_code": "VARCHAR(64)",
+            "entry_candle_timestamp": "DATETIME",
             "is_recovered": "BOOLEAN NOT NULL DEFAULT 0",
             "recovery_note": "TEXT",
         },

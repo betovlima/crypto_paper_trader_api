@@ -72,9 +72,16 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     admin_api_key: str | None = None
 
+    # Shared closed-candle entry-quality safeguards. These filters reduce entries
+    # caused by tiny candle bodies, late price extension or weak breakout closes.
+    entry_min_body_atr: float = Field(default=0.08, ge=0, le=2)
+    entry_max_extension_atr: float = Field(default=1.25, gt=0, le=10)
+    breakout_close_buffer_atr: float = Field(default=0.05, ge=0, le=2)
+
     # EMA9 Setup 9.1 comparison settings.
     ema9_period: int = Field(default=9, ge=2, le=100)
     ema9_entry_tick_rate: float = Field(default=0.0, ge=0, lt=0.01)
+    ema9_setup_max_age_hours: float = Field(default=4.0, gt=0, le=48)
 
     # Autonomous AI Pattern Trader. This remains PAPER_ONLY and learns directly
     # from chronological OHLCV windows instead of selecting a handcrafted setup.

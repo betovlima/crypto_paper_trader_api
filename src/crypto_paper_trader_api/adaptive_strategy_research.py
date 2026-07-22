@@ -647,6 +647,9 @@ class OpenAIStrategyReviewer:
 
 
 class GeneratedStrategyExecutor:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
     @staticmethod
     def _ema(row: pd.Series, period: int) -> float:
         key = f"ema_{period}"
@@ -682,17 +685,28 @@ class GeneratedStrategyExecutor:
         if adx < spec.adx_min or relative_volume < spec.relative_volume_min:
             return False, "strength_or_volume_filter"
 
+        body_atr = abs(close - float(row["open"])) / max(atr, 1e-12)
+        bullish_close = close > float(row["open"]) and body_atr >= self.settings.entry_min_body_atr
         family = spec.family
         if family == "TREND_PULLBACK":
-            touched = float(row["low"]) <= fast + atr * spec.pullback_atr
-            recovered = close > fast and float(previous["close"]) <= close
-            approved = close > regime_ema and fast > slow and touched and recovered
+            touch_low = slow - atr * spec.pullback_atr
+            touch_high = fast + atr * spec.pullback_atr
+            touched = float(row["low"]) <= touch_high and float(row["high"]) >= touch_low
+            recovered = close > fast and float(previous["close"]) <= close and bullish_close
+            not_extended = close - fast <= atr * min(self.settings.entry_max_extension_atr, 0.90)
+            approved = close > regime_ema and fast > slow and touched and recovered and not_extended
             return approved, "trend_pullback" if approved else "trend_pullback_not_ready"
 
         if family == "DONCHIAN_BREAKOUT":
             start = max(0, index - spec.breakout_lookback)
             previous_high = float(frame.iloc[start:index]["high"].max())
-            approved = close > previous_high and close > regime_ema and fast >= slow
+            approved = (
+                close > previous_high + atr * self.settings.breakout_close_buffer_atr
+                and close > regime_ema
+                and fast >= slow
+                and bullish_close
+                and close - previous_high <= atr * self.settings.entry_max_extension_atr
+            )
             return approved, "donchian_breakout" if approved else "donchian_breakout_not_ready"
 
         if family == "VOLATILITY_BREAKOUT":
@@ -702,18 +716,35 @@ class GeneratedStrategyExecutor:
                 (frame.iloc[start:index]["high"] - frame.iloc[start:index]["low"]).mean()
             )
             trigger = reference_open + max(recent_range * 0.5, atr * spec.breakout_atr)
-            approved = close > trigger and close > regime_ema and fast >= slow
+            approved = (
+                close > trigger + atr * self.settings.breakout_close_buffer_atr
+                and close > regime_ema
+                and fast >= slow
+                and bullish_close
+                and close - trigger <= atr * self.settings.entry_max_extension_atr
+            )
             return approved, "atr_expansion_breakout" if approved else "breakout_trigger_not_reached"
 
         if family == "MEAN_REVERSION":
             extension = (fast - close) / max(atr, 1e-12)
             not_structurally_bearish = close > regime_ema * 0.97 or slow > regime_ema
-            approved = extension >= spec.pullback_atr and not_structurally_bearish
+            approved = (
+                extension >= spec.pullback_atr
+                and not_structurally_bearish
+                and close > float(previous["close"])
+                and bullish_close
+            )
             return approved, "mean_reversion_extension" if approved else "mean_reversion_not_extended"
 
         if family == "MOMENTUM_CONTINUATION":
             momentum = float(row.get("return_3", 0.0) or 0.0)
-            approved = close > regime_ema and fast > slow and momentum > 0.002
+            approved = (
+                close > regime_ema
+                and fast > slow
+                and momentum > 0.002
+                and bullish_close
+                and close - fast <= atr * self.settings.entry_max_extension_atr
+            )
             return approved, "momentum_continuation" if approved else "momentum_not_confirmed"
 
         return False, "unsupported_family"
@@ -774,7 +805,7 @@ class GeneratedStrategyExecutor:
 class StrategyBacktestEngine:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.executor = GeneratedStrategyExecutor()
+        self.executor = GeneratedStrategyExecutor(settings)
 
     @staticmethod
     def _prepare_frame(frame: pd.DataFrame, spec: StrategySpecification) -> pd.DataFrame:
@@ -1002,7 +1033,7 @@ class AdaptiveStrategyResearchEngine:
         self.web = WebStrategyResearcher(settings)
         self.reviewer = OpenAIStrategyReviewer(settings)
         self.backtest = StrategyBacktestEngine(settings)
-        self.executor = GeneratedStrategyExecutor()
+        self.executor = GeneratedStrategyExecutor(settings)
 
     def research(
         self,

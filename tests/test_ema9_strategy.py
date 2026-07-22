@@ -33,8 +33,24 @@ def costs() -> ExecutionCosts:
     )
 
 
-def row(ema9: float, high: float = 101, low: float = 99, close: float = 100) -> pd.Series:
-    return pd.Series({"ema_9": ema9, "high": high, "low": low, "close": close})
+def row(
+    ema9: float,
+    high: float = 101,
+    low: float = 99,
+    close: float = 100,
+    open_price: float = 99.5,
+    atr: float = 1.0,
+) -> pd.Series:
+    return pd.Series(
+        {
+            "ema_9": ema9,
+            "open": open_price,
+            "high": high,
+            "low": low,
+            "close": close,
+            "atr_14": atr,
+        }
+    )
 
 
 def test_ema9_down_to_up_reversal_arms_setup() -> None:
@@ -55,6 +71,24 @@ def test_ema9_down_to_up_reversal_arms_setup() -> None:
     assert item.entry_trigger_price == 101
     assert item.initial_setup_stop_price == 99
 
+
+
+def test_ema9_touch_without_bullish_close_does_not_arm_setup() -> None:
+    strategy = Ema9Setup91Strategy(Settings(), mode=Ema9Setup91Strategy.CLASSIC)
+    item = account(EMA9_SETUP_91_COST_AWARE)
+
+    decision = strategy.analyze_candle(
+        account=item,
+        current_row=row(99.8, high=101.0, low=99.0, close=99.6, open_price=100.4),
+        previous_row=row(99.5),
+        previous_previous_row=row(100.0),
+        costs=costs(),
+        now=datetime.now(timezone.utc),
+    )
+
+    assert decision.final_signal == "HOLD"
+    assert item.setup_status == "IDLE"
+    assert "strict_reversal_without_bullish_setup_candle" in decision.reason
 
 def test_fees_do_not_reject_a_valid_ema9_setup() -> None:
     settings = Settings()
@@ -93,6 +127,46 @@ def test_strict_reversal_without_cross_does_not_arm_setup() -> None:
     assert item.setup_status == "IDLE"
     assert "strict_reversal_without_ema9_cross" in decision.reason
 
+
+
+def test_ema9_armed_setup_requires_closed_candle_breakout() -> None:
+    strategy = Ema9Setup91Strategy(Settings(), mode=Ema9Setup91Strategy.CLASSIC)
+    item = account(EMA9_SETUP_91_COST_AWARE)
+    setup_time = datetime(2026, 7, 22, 9, 30, tzinfo=timezone.utc)
+
+    strategy.analyze_candle(
+        account=item,
+        current_row=row(99.8, high=101.0, low=99.0, close=100.2, open_price=99.5),
+        previous_row=row(99.5),
+        previous_previous_row=row(100.0),
+        costs=costs(),
+        now=setup_time,
+    )
+    trigger = float(item.entry_trigger_price)
+
+    wick_only = strategy.analyze_candle(
+        account=item,
+        current_row=row(100.0, high=trigger + 0.2, low=99.7, close=trigger - 0.1, open_price=99.9),
+        previous_row=row(99.8),
+        previous_previous_row=row(99.5),
+        costs=costs(),
+        now=datetime(2026, 7, 22, 10, 0, tzinfo=timezone.utc),
+    )
+    assert wick_only.final_signal == "HOLD"
+    assert item.has_open_position is False
+    assert "intrabar_breakout_rejected_without_close_confirmation" in wick_only.reason
+
+    confirmed = strategy.analyze_candle(
+        account=item,
+        current_row=row(100.2, high=trigger + 0.4, low=100.0, close=trigger + 0.2, open_price=trigger - 0.1),
+        previous_row=row(100.0),
+        previous_previous_row=row(99.8),
+        costs=costs(),
+        now=datetime(2026, 7, 22, 10, 30, tzinfo=timezone.utc),
+    )
+    assert confirmed.final_signal == "BUY"
+    assert confirmed.setup_status == "TRIGGERED"
+    assert confirmed.execution_reference_price == trigger + 0.2
 
 def test_classic_variant_arms_exit_below_bearish_reversal_candle() -> None:
     strategy = Ema9Setup91Strategy(Settings(), mode=Ema9Setup91Strategy.CLASSIC)
