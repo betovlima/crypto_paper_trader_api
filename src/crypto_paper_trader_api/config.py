@@ -78,6 +78,22 @@ class Settings(BaseSettings):
     entry_max_extension_atr: float = Field(default=1.25, gt=0, le=10)
     breakout_close_buffer_atr: float = Field(default=0.05, ge=0, le=2)
 
+    # Market-context filters derived from the Larry Williams concepts reviewed in
+    # the Fabrício Lorenz analysis. These remain ordinary settings in this version.
+    market_context_lookback: int = Field(default=20, ge=10, le=100)
+    market_context_compression_window: int = Field(default=5, ge=3, le=20)
+    ignition_min_score: float = Field(default=0.52, ge=0, le=1)
+    exhaustion_max_entry_score: float = Field(default=0.62, ge=0, le=1)
+    breakout_require_ignition: bool = True
+    crossover_block_exhaustion: bool = True
+    expectancy_min_trades: int = Field(default=20, ge=5, le=500)
+    selector_expectancy_weight: float = Field(default=0.30, ge=0, le=1)
+    selector_stability_weight: float = Field(default=0.20, ge=0, le=1)
+    selector_profit_factor_weight: float = Field(default=0.15, ge=0, le=1)
+    selector_drawdown_weight: float = Field(default=0.15, ge=0, le=1)
+    selector_sample_size_weight: float = Field(default=0.10, ge=0, le=1)
+    selector_regime_fit_weight: float = Field(default=0.10, ge=0, le=1)
+
     # EMA9 Setup 9.1 comparison settings.
     ema9_period: int = Field(default=9, ge=2, le=100)
     ema9_entry_tick_rate: float = Field(default=0.0, ge=0, lt=0.01)
@@ -136,7 +152,7 @@ class Settings(BaseSettings):
     selector_min_confidence: float = Field(default=0.60, ge=0, le=1)
     selector_min_expected_net_return: float = Field(default=0.0030, ge=0, le=0.1)
     selector_min_reward_risk_ratio: float = Field(default=1.30, gt=0, le=10)
-    selector_model_version: str = "ADAPTIVE-RESEARCH-SELECTOR-v1"
+    selector_model_version: str = "ADAPTIVE-RESEARCH-SELECTOR-v2-EXPECTANCY"
 
     adaptive_research_web_enabled: bool = True
     adaptive_research_openai_model: str = "gpt-5"

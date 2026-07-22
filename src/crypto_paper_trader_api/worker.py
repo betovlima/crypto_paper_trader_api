@@ -373,9 +373,21 @@ class TraderWorker:
         ai_execution_candles = await self.ai_history_service.synchronize(
             experiment.market, experiment.execution_timeframe, execution_candles
         )
-        execution_indicators = add_indicators(execution_candles)
-        ai_execution_indicators = add_indicators(ai_execution_candles)
-        trend_indicators = add_indicators(trend_candles)
+        execution_indicators = add_indicators(
+            execution_candles,
+            context_lookback=self.settings.market_context_lookback,
+            compression_window=self.settings.market_context_compression_window,
+        )
+        ai_execution_indicators = add_indicators(
+            ai_execution_candles,
+            context_lookback=self.settings.market_context_lookback,
+            compression_window=self.settings.market_context_compression_window,
+        )
+        trend_indicators = add_indicators(
+            trend_candles,
+            context_lookback=self.settings.market_context_lookback,
+            compression_window=self.settings.market_context_compression_window,
+        )
         latest_complete_row(execution_indicators)
         latest_complete_row(trend_indicators)
 
@@ -1036,6 +1048,30 @@ class TraderWorker:
             return_1=float(execution_row["return_1"]),
             return_3=float(execution_row["return_3"]),
             return_6=float(execution_row["return_6"]),
+            range_ratio_20=float(execution_row.get("range_ratio_20", 0.0)),
+            body_ratio=float(execution_row.get("body_ratio", 0.0)),
+            close_location=float(execution_row.get("close_location", 0.0)),
+            compression_ratio=float(execution_row.get("compression_ratio", 1.0)),
+            trend_age_up=float(execution_row.get("trend_age_up", 0.0)),
+            extension_ema20_atr=float(execution_row.get("extension_ema20_atr", 0.0)),
+            ignition_score=float(execution_row.get("ignition_score", 0.0)),
+            exhaustion_score=float(execution_row.get("exhaustion_score", 0.0)),
+            expected_value_r=(
+                (
+                    float(prediction.upward_probability)
+                    * float(decision.reward_risk_ratio or 0.0)
+                    - (1.0 - float(prediction.upward_probability))
+                )
+                if account.strategy_code == CURRENT_HYBRID
+                else (
+                    float(decision.ai_upward_probability)
+                    * float(decision.reward_risk_ratio or 0.0)
+                    - (1.0 - float(decision.ai_upward_probability))
+                )
+                if account.strategy_code == AI_PATTERN_TRADER
+                and decision.ai_upward_probability is not None
+                else None
+            ),
             trend_close=float(trend_row["close"]),
             trend_ema_20=float(trend_row["ema_20"]),
             trend_ema_50=float(trend_row["ema_50"]),

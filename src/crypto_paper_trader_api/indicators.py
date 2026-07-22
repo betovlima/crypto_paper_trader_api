@@ -20,10 +20,22 @@ FEATURE_COLUMNS = [
     "candle_body_pct",
     "upper_wick_pct",
     "lower_wick_pct",
+    "range_ratio_20",
+    "body_ratio",
+    "close_location",
+    "compression_ratio",
+    "trend_age_up",
+    "extension_ema20_atr",
+    "ignition_score",
+    "exhaustion_score",
 ]
 
 
-def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
+def add_indicators(
+    frame: pd.DataFrame,
+    context_lookback: int = 20,
+    compression_window: int = 5,
+) -> pd.DataFrame:
     """Return a copy with technical indicators and model features."""
 
     required = {"open", "high", "low", "close", "volume", "timestamp"}
@@ -95,6 +107,56 @@ def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
     data["price_gap_ema_200"] = (close - data["ema_200"]) / safe_close
     data["atr_pct"] = data["atr_14"] / safe_close
 
+    # Context features use only the current and previously closed candles. The
+    # reference medians are shifted by one row so the current range never changes
+    # its own baseline. These features distinguish ignition after compression from
+    # exhaustion after an already extended movement.
+    candle_range = (high - low).replace(0, np.nan)
+    previous_range_median = candle_range.shift(1).rolling(
+        context_lookback, min_periods=context_lookback
+    ).median()
+    recent_range_median = candle_range.shift(1).rolling(
+        compression_window, min_periods=compression_window
+    ).median()
+    data["range_ratio_20"] = candle_range / previous_range_median.replace(0, np.nan)
+    data["body_ratio"] = (close - open_).abs() / candle_range
+    data["close_location"] = (close - low) / candle_range
+    data["upper_wick_ratio"] = (high - candle_top) / candle_range
+    data["lower_wick_ratio"] = (candle_bottom - low) / candle_range
+    data["compression_ratio"] = recent_range_median / previous_range_median.replace(0, np.nan)
+
+    positive_candle = close.diff().gt(0)
+    positive_groups = positive_candle.ne(positive_candle.shift()).cumsum()
+    trend_age = positive_candle.groupby(positive_groups).cumcount().add(1)
+    data["trend_age_up"] = trend_age.where(positive_candle, 0).astype(float)
+    data["extension_ema20_atr"] = (close - data["ema_20"]).abs() / data["atr_14"].replace(0, np.nan)
+
+    range_component = ((data["range_ratio_20"] - 1.0) / 1.5).clip(0, 1)
+    body_component = ((data["body_ratio"] - 0.45) / 0.50).clip(0, 1)
+    close_component = ((data["close_location"] - 0.55) / 0.45).clip(0, 1)
+    volume_component = ((data["relative_volume"] - 1.0) / 1.5).clip(0, 1)
+    compression_component = ((1.0 - data["compression_ratio"]) / 0.50).clip(0, 1)
+    extension_penalty = ((data["extension_ema20_atr"] - 1.0) / 1.5).clip(0, 1)
+    data["ignition_score"] = (
+        0.25 * range_component
+        + 0.25 * body_component
+        + 0.20 * close_component
+        + 0.15 * volume_component
+        + 0.15 * compression_component
+    ) * (1.0 - 0.55 * extension_penalty)
+
+    trend_age_component = ((data["trend_age_up"] - 3.0) / 7.0).clip(0, 1)
+    extension_component = ((data["extension_ema20_atr"] - 1.0) / 2.0).clip(0, 1)
+    upper_wick_component = ((data["upper_wick_ratio"] - 0.12) / 0.50).clip(0, 1)
+    extreme_volume_component = ((data["relative_volume"] - 1.5) / 2.0).clip(0, 1)
+    data["exhaustion_score"] = (
+        0.30 * range_component
+        + 0.25 * trend_age_component
+        + 0.25 * extension_component
+        + 0.10 * upper_wick_component
+        + 0.10 * extreme_volume_component
+    ).clip(0, 1)
+
     numeric_columns = list(
         dict.fromkeys(
             [
@@ -117,6 +179,8 @@ def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
                 "average_volume_20",
                 "relative_volume",
                 "volatility_20",
+                "upper_wick_ratio",
+                "lower_wick_ratio",
                 *FEATURE_COLUMNS,
             ]
         )

@@ -78,6 +78,9 @@ class StrategyValidationMetrics:
     profit_factor: float | None
     trade_count: int
     win_rate: float | None
+    expectancy_r: float
+    average_win_r: float | None
+    average_loss_r: float | None
     stability: float
     fold_returns: tuple[float, ...]
     eligible: bool
@@ -588,6 +591,17 @@ class OpenAIStrategyReviewer:
                 "profit_factor": metrics.profit_factor,
                 "trade_count": metrics.trade_count,
                 "stability": round(metrics.stability, 6),
+                "expectancy_r": round(metrics.expectancy_r, 6),
+                "average_win_r": (
+                    round(metrics.average_win_r, 6)
+                    if metrics.average_win_r is not None
+                    else None
+                ),
+                "average_loss_r": (
+                    round(metrics.average_loss_r, 6)
+                    if metrics.average_loss_r is not None
+                    else None
+                ),
             }
             for spec, metrics in eligible
         ]
@@ -844,6 +858,8 @@ class StrategyBacktestEngine:
         peak = 1.0
         max_drawdown = 0.0
         trade_returns: list[float] = []
+        trade_r_multiples: list[float] = []
+        entry_risk_rate = 0.0
         entry_cost = costs.taker_fee_rate + costs.half_spread_rate + costs.slippage_rate
         exit_cost = entry_cost
 
@@ -870,7 +886,11 @@ class StrategyBacktestEngine:
                         exit_price = close
                 if exit_price is not None:
                     proceeds = quantity * exit_price * (1 - exit_cost)
-                    trade_returns.append(proceeds / max(entry_price * quantity, 1e-12) - 1)
+                    trade_return = proceeds / max(entry_price * quantity, 1e-12) - 1
+                    trade_returns.append(trade_return)
+                    trade_r_multiples.append(
+                        trade_return / max(entry_risk_rate, 1e-12)
+                    )
                     cash = proceeds
                     quantity = 0.0
 
@@ -885,6 +905,7 @@ class StrategyBacktestEngine:
                     entry_price = execution
                     entry_index = index
                     stop = close - atr * self._active_spec.stop_atr
+                    entry_risk_rate = max(close - stop, 1e-12) / max(close, 1e-12)
                     target = close + atr * self._active_spec.target_atr
                     trailing = close - atr * self._active_spec.trailing_atr
                     cash = 0.0
@@ -896,11 +917,15 @@ class StrategyBacktestEngine:
         if quantity > 0:
             final_close = float(frame.iloc[-1]["close"])
             proceeds = quantity * final_close * (1 - exit_cost)
-            trade_returns.append(proceeds / max(entry_price * quantity, 1e-12) - 1)
+            trade_return = proceeds / max(entry_price * quantity, 1e-12) - 1
+            trade_returns.append(trade_return)
+            trade_r_multiples.append(trade_return / max(entry_risk_rate, 1e-12))
             cash = proceeds
 
         gains = sum(value for value in trade_returns if value > 0)
         losses = abs(sum(value for value in trade_returns if value < 0))
+        winning_r = [value for value in trade_r_multiples if value > 0]
+        losing_r = [value for value in trade_r_multiples if value < 0]
         return {
             "net_return": cash - 1,
             "max_drawdown_pct": max_drawdown,
@@ -908,6 +933,12 @@ class StrategyBacktestEngine:
             "wins": sum(1 for value in trade_returns if value > 0),
             "gross_profit": gains,
             "gross_loss": losses,
+            "r_sum": sum(trade_r_multiples),
+            "r_count": len(trade_r_multiples),
+            "winning_r_sum": sum(winning_r),
+            "winning_r_count": len(winning_r),
+            "losing_r_sum": sum(losing_r),
+            "losing_r_count": len(losing_r),
         }
 
     def run_with_spec(
@@ -923,23 +954,35 @@ class StrategyBacktestEngine:
 
     def _score(
         self,
-        net_return: float,
+        expectancy_r: float,
         max_drawdown: float,
         profit_factor: float | None,
         trade_count: int,
         stability: float,
+        regime_fit: float = 1.0,
     ) -> float:
-        pf = min(profit_factor or 0.0, 3.0)
-        trade_quality = min(trade_count / max(self.settings.adaptive_research_min_trades, 1), 1.5)
-        raw = (
-            45.0
-            + net_return * 450.0
-            - max_drawdown * 220.0
-            + pf * 8.0
-            + stability * 16.0
-            + trade_quality * 8.0
+        expectancy_score = min(max((expectancy_r + 0.20) / 1.20, 0.0), 1.0)
+        stability_score = min(max(stability, 0.0), 1.0)
+        profit_factor_score = min(max((profit_factor or 0.0) / 3.0, 0.0), 1.0)
+        drawdown_score = 1.0 - min(
+            max(max_drawdown / max(self.settings.adaptive_research_max_drawdown_pct, 1e-12), 0.0),
+            1.0,
         )
-        return round(min(max(raw, 0.0), 100.0), 2)
+        sample_size_score = min(
+            trade_count / max(self.settings.adaptive_research_min_trades, 1),
+            1.0,
+        )
+        regime_fit_score = min(max(regime_fit, 0.0), 1.0)
+
+        weighted = (
+            self.settings.selector_expectancy_weight * expectancy_score
+            + self.settings.selector_stability_weight * stability_score
+            + self.settings.selector_profit_factor_weight * profit_factor_score
+            + self.settings.selector_drawdown_weight * drawdown_score
+            + self.settings.selector_sample_size_weight * sample_size_score
+            + self.settings.selector_regime_fit_weight * regime_fit_score
+        )
+        return round(min(max(weighted * 100.0, 0.0), 100.0), 2)
 
     @staticmethod
     def _row_regime(row: pd.Series) -> str:
@@ -976,7 +1019,7 @@ class StrategyBacktestEngine:
         spec = self._active_spec
         clean = self._prepare_frame(frame, spec)
         if len(clean) < self.settings.adaptive_research_min_candles:
-            return StrategyValidationMetrics(0, 0, 1, None, 0, None, 0, (), False)
+            return StrategyValidationMetrics(0, 0, 1, None, 0, None, 0, None, None, 0, (), False)
         validation_rows = min(
             self.settings.adaptive_research_validation_rows,
             max(120, len(clean) // 4),
@@ -1009,10 +1052,25 @@ class StrategyBacktestEngine:
         trade_count = sum(int(item["trade_count"]) for item in fold_metrics)
         wins = sum(int(item["wins"]) for item in fold_metrics)
         win_rate = wins / trade_count if trade_count else None
-        score = self._score(net_return, max_drawdown, profit_factor, trade_count, stability)
+        total_r = sum(float(item["r_sum"]) for item in fold_metrics)
+        total_r_count = sum(int(item["r_count"]) for item in fold_metrics)
+        expectancy_r = total_r / total_r_count if total_r_count else 0.0
+        winning_r_sum = sum(float(item["winning_r_sum"]) for item in fold_metrics)
+        winning_r_count = sum(int(item["winning_r_count"]) for item in fold_metrics)
+        losing_r_sum = sum(float(item["losing_r_sum"]) for item in fold_metrics)
+        losing_r_count = sum(int(item["losing_r_count"]) for item in fold_metrics)
+        average_win_r = winning_r_sum / winning_r_count if winning_r_count else None
+        average_loss_r = losing_r_sum / losing_r_count if losing_r_count else None
+        score = self._score(
+            expectancy_r, max_drawdown, profit_factor, trade_count, stability
+        )
         eligible = all(
             [
-                trade_count >= self.settings.adaptive_research_min_trades,
+                trade_count >= max(
+                    self.settings.adaptive_research_min_trades,
+                    self.settings.expectancy_min_trades,
+                ),
+                expectancy_r > 0,
                 net_return > 0,
                 max_drawdown <= self.settings.adaptive_research_max_drawdown_pct,
                 (profit_factor or 0.0) >= self.settings.adaptive_research_min_profit_factor,
@@ -1021,8 +1079,18 @@ class StrategyBacktestEngine:
             ]
         )
         return StrategyValidationMetrics(
-            score, net_return, max_drawdown, profit_factor, trade_count, win_rate,
-            stability, tuple(fold_returns), eligible,
+            score,
+            net_return,
+            max_drawdown,
+            profit_factor,
+            trade_count,
+            win_rate,
+            expectancy_r,
+            average_win_r,
+            average_loss_r,
+            stability,
+            tuple(fold_returns),
+            eligible,
         )
 
 
@@ -1082,6 +1150,7 @@ class AdaptiveStrategyResearchEngine:
                     "trade_count": metrics.trade_count,
                     "win_rate": round(metrics.win_rate, 6) if metrics.win_rate is not None else None,
                     "stability": round(metrics.stability, 6),
+                    "expectancy_r": round(metrics.expectancy_r, 6),
                     "eligible": metrics.eligible,
                 }
             )

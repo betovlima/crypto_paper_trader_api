@@ -1,6 +1,20 @@
-# Crypto Paper Trader API — v0.16.4
+# Crypto Paper Trader API — v0.16.5
 
 PAPER_ONLY FastAPI service for crypto strategy research with public MEXC Spot market data. The project contains no authenticated order, transfer, deposit or withdrawal implementation.
+
+## v0.16.5 — market-context and expectancy strategy optimization
+
+This release contains only the strategy improvements discussed from the Larry Williams concepts. It does **not** move runtime parameters to the database and does not add any new login or application-entry key requirement.
+
+- Adds ignition, exhaustion, compression, trend-age and EMA-extension context features.
+- Uses only current and previously closed candles when calculating context baselines.
+- Blocks exhausted entries across hybrid, crossover, pullback, Stormer, breakout, EMA 9.1 and AI strategies.
+- Requires configurable ignition quality for volatility breakouts.
+- Extends the AI Pattern Trader feature set with market-context variables.
+- Stores context measurements and expected value in R in decision snapshots.
+- Changes adaptive strategy validation from win-rate emphasis to expectancy in R, stability, profit factor, drawdown and sample size.
+- Keeps the existing environment-based configuration behavior unchanged for now.
+
 
 ## Adaptive Strategy Research Selector
 

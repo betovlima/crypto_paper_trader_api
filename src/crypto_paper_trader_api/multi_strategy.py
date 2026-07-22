@@ -105,6 +105,32 @@ def _not_overextended(
     return 0.0 <= extension <= max(atr, 1e-12) * maximum_extension_atr
 
 
+def _market_context_values(row: pd.Series) -> tuple[float, float, float]:
+    ignition = float(row.get("ignition_score", 0.0) or 0.0)
+    exhaustion = float(row.get("exhaustion_score", 0.0) or 0.0)
+    compression_ratio = float(row.get("compression_ratio", 1.0) or 1.0)
+    compression_score = max(0.0, min(1.0, 1.0 - compression_ratio))
+    return ignition, exhaustion, compression_score
+
+
+def _context_entry_allowed(
+    row: pd.Series,
+    settings: Settings,
+    *,
+    require_ignition: bool = False,
+) -> bool:
+    ignition, exhaustion, _ = _market_context_values(row)
+    if exhaustion > settings.exhaustion_max_entry_score:
+        return False
+    if (
+        require_ignition
+        and "ignition_score" in row.index
+        and ignition < settings.ignition_min_score
+    ):
+        return False
+    return True
+
+
 def _risk_levels(
     close: float,
     atr: float,
@@ -198,6 +224,10 @@ class HybridComparisonStrategy:
         entry_not_overextended = _not_overextended(
             close, fast, atr, self.settings.entry_max_extension_atr
         )
+        ignition_score, exhaustion_score, compression_score = _market_context_values(
+            execution_row
+        )
+        context_not_exhausted = _context_entry_allowed(execution_row, self.settings)
 
         reasons = [
             f"profile={active_profile.code}",
@@ -210,6 +240,10 @@ class HybridComparisonStrategy:
             f"entry_body_atr={_candle_body_atr(execution_row, atr):.6f}",
             f"close_above_fast_ema={str(close_above_fast).lower()}",
             f"entry_not_overextended={str(entry_not_overextended).lower()}",
+            f"ignition_score={ignition_score:.6f}",
+            f"exhaustion_score={exhaustion_score:.6f}",
+            f"compression_score={compression_score:.6f}",
+            f"context_not_exhausted={str(context_not_exhausted).lower()}",
             "fees_are_accounting_only=true",
             f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
         ]
@@ -311,6 +345,7 @@ class HybridComparisonStrategy:
                 bullish_entry_candle,
                 close_above_fast,
                 entry_not_overextended,
+                context_not_exhausted,
                 atr > 0,
             ]
         )
@@ -382,6 +417,11 @@ class EmaCrossoverStrategy:
         entry_not_overextended = _not_overextended(
             close, fast, atr, self.settings.entry_max_extension_atr
         )
+        ignition_score, exhaustion_score, compression_score = _market_context_values(current_row)
+        context_not_exhausted = (
+            not self.settings.crossover_block_exhaustion
+            or _context_entry_allowed(current_row, self.settings)
+        )
 
         checks = {
             "fresh_fast_slow_cross": crossed_up,
@@ -397,6 +437,7 @@ class EmaCrossoverStrategy:
             "bullish_entry_candle": bullish_entry_candle,
             "close_above_cross": close_above_cross,
             "entry_not_overextended": entry_not_overextended,
+            "context_not_exhausted": context_not_exhausted,
         }
         confirmations = sum(checks.values())
         reasons = [
@@ -404,8 +445,11 @@ class EmaCrossoverStrategy:
             f"ema_periods={profile.fast_ema_period}/{profile.slow_ema_period}/{profile.regime_ema_period}",
             f"crossed_up={crossed_up}",
             f"crossed_down={crossed_down}",
-            f"confirmations={confirmations}/10",
+            f"confirmations={confirmations}/11",
             f"entry_body_atr={_candle_body_atr(current_row, atr):.6f}",
+            f"ignition_score={ignition_score:.6f}",
+            f"exhaustion_score={exhaustion_score:.6f}",
+            f"compression_score={compression_score:.6f}",
             f"technical_target_return={potential_return:.6f}",
             "fees_are_accounting_only=true",
             f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
@@ -494,6 +538,8 @@ class EmaPullbackStrategy:
         adx_ok = float(current_row["adx_14"]) >= profile.adx_min
         volume_ok = float(current_row["relative_volume"]) >= profile.relative_volume_min
         rsi_ok = profile.rsi_buy_min <= float(current_row["rsi_14"]) <= profile.rsi_buy_max
+        ignition_score, exhaustion_score, compression_score = _market_context_values(current_row)
+        context_not_exhausted = _context_entry_allowed(current_row, self.settings)
         checks = {
             "bullish_ema_structure": bullish_structure,
             "bullish_trend_timeframe": trend_bullish,
@@ -504,6 +550,7 @@ class EmaPullbackStrategy:
             "adx_confirmed": adx_ok,
             "volume_confirmed": volume_ok,
             "rsi_confirmed": rsi_ok,
+            "context_not_exhausted": context_not_exhausted,
         }
         confirmations = sum(checks.values())
         stop, target, potential_return = _risk_levels(close, atr, profile)
@@ -518,8 +565,11 @@ class EmaPullbackStrategy:
             f"trend_bullish={trend_bullish}",
             f"pulled_back_to_ema={touched_fast_or_slow}",
             f"bullish_rejection={bullish_rejection}",
-            f"confirmations={confirmations}/9",
+            f"confirmations={confirmations}/10",
             f"entry_body_atr={_candle_body_atr(current_row, atr):.6f}",
+            f"ignition_score={ignition_score:.6f}",
+            f"exhaustion_score={exhaustion_score:.6f}",
+            f"compression_score={compression_score:.6f}",
             f"touch_zone={touch_zone_low:.8f}-{touch_zone_high:.8f}",
             f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
         ]
@@ -615,6 +665,8 @@ class StormerFilhaMalCriadaStrategy:
             "pullback_touched_ribbon": deepest_touched is not None,
         }
         confirmations = sum(checks.values())
+        ignition_score, exhaustion_score, compression_score = _market_context_values(current_row)
+        context_not_exhausted = _context_entry_allowed(current_row, self.settings)
         reasons = [
             "setup=STORMER_FILHA_MAL_CRIADA",
             f"ema_periods={','.join(map(str, self.EMA_PERIODS))}",
@@ -623,6 +675,10 @@ class StormerFilhaMalCriadaStrategy:
             f"trend_aligned={str(trend_aligned).lower()}",
             f"deepest_touched={deepest_touched}",
             f"confirmations={confirmations}/5",
+            f"ignition_score={ignition_score:.6f}",
+            f"exhaustion_score={exhaustion_score:.6f}",
+            f"compression_score={compression_score:.6f}",
+            f"context_not_exhausted={str(context_not_exhausted).lower()}",
             f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
         ]
 
@@ -651,6 +707,7 @@ class StormerFilhaMalCriadaStrategy:
                 and close >= trigger
                 and _bullish_confirmation(current_row, atr, self.settings.entry_min_body_atr)
                 and close - trigger <= atr * self.settings.entry_max_extension_atr
+                and context_not_exhausted
             )
             if breakout_confirmed:
                 stop = float(account.initial_setup_stop_price or (emas[50] - stop_buffer))
@@ -751,6 +808,13 @@ class LarryVolatilityBreakoutStrategy:
         entry_not_overextended = close - trigger <= atr * self.settings.entry_max_extension_atr
         volume_ok = float(current_row["relative_volume"]) >= profile.relative_volume_min
         adx_ok = float(current_row["adx_14"]) >= profile.adx_min
+        ignition_score, exhaustion_score, compression_score = _market_context_values(current_row)
+        ignition_confirmed = (
+            not self.settings.breakout_require_ignition
+            or "ignition_score" not in current_row.index
+            or ignition_score >= self.settings.ignition_min_score
+        )
+        context_not_exhausted = _context_entry_allowed(current_row, self.settings)
         checks = {
             "range_breakout": breakout,
             "trend_bullish": trend_bullish,
@@ -760,6 +824,8 @@ class LarryVolatilityBreakoutStrategy:
             "bullish_breakout_candle": bullish_breakout_candle,
             "close_near_high": close_near_high,
             "entry_not_overextended": entry_not_overextended,
+            "ignition_confirmed": ignition_confirmed,
+            "context_not_exhausted": context_not_exhausted,
         }
         confirmations = sum(checks.values())
         stop = close - self.settings.larry_breakout_stop_atr * atr
@@ -773,8 +839,11 @@ class LarryVolatilityBreakoutStrategy:
             f"reference_range={reference_range:.8f}",
             f"breakout_trigger={trigger:.8f}",
             f"breakout={breakout}",
-            f"confirmations={confirmations}/8",
+            f"confirmations={confirmations}/10",
             f"breakout_buffer={breakout_buffer:.8f}",
+            f"ignition_score={ignition_score:.6f}",
+            f"exhaustion_score={exhaustion_score:.6f}",
+            f"compression_score={compression_score:.6f}",
             f"entry_body_atr={_candle_body_atr(current_row, atr):.6f}",
             f"estimated_round_trip_cost={costs.estimated_round_trip_rate:.6f}",
         ]
@@ -1229,6 +1298,11 @@ class Ema9Setup91Strategy:
             trigger = float(account.entry_trigger_price or 0.0)
             setup_timestamp = account.setup_candle_timestamp
             different_candle = setup_timestamp is None or self._as_utc(now) > self._as_utc(setup_timestamp)
+            ignition_score, exhaustion_score, compression_score = _market_context_values(current_row)
+            context_not_exhausted = (
+                self.settings is None
+                or _context_entry_allowed(current_row, self.settings)
+            )
             confirmed_breakout = (
                 different_candle
                 and trigger > 0
@@ -1240,6 +1314,7 @@ class Ema9Setup91Strategy:
                 and close - trigger <= atr * (
                     self.settings.entry_max_extension_atr if self.settings else 1.25
                 )
+                and context_not_exhausted
             )
             if confirmed_breakout:
                 account.setup_status = "TRIGGERED"
@@ -1252,6 +1327,9 @@ class Ema9Setup91Strategy:
                         f"closed_candle_breakout_trigger={trigger:.8f}",
                         f"breakout_close={close:.8f}",
                         "breakout_confirmed_on_closed_candle=true",
+                        f"ignition_score={ignition_score:.6f}",
+                        f"exhaustion_score={exhaustion_score:.6f}",
+                        f"compression_score={compression_score:.6f}",
                     ]
                 )
                 return StrategyDecision(

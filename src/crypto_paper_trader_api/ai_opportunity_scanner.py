@@ -425,8 +425,16 @@ class AIOpportunityScanner:
         trend_frame,
         depth,
     ) -> dict[str, object]:
-        execution_frame = add_indicators(execution_frame)
-        trend_frame = add_indicators(trend_frame)
+        execution_frame = add_indicators(
+            execution_frame,
+            context_lookback=self.settings.market_context_lookback,
+            compression_window=self.settings.market_context_compression_window,
+        )
+        trend_frame = add_indicators(
+            trend_frame,
+            context_lookback=self.settings.market_context_lookback,
+            compression_window=self.settings.market_context_compression_window,
+        )
         trend_row = latest_complete_row(trend_frame)
         profile = get_trading_profile("BALANCED_INTRADAY")
         costs = ExecutionCosts(

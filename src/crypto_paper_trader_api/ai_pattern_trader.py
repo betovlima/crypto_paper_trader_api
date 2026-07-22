@@ -19,7 +19,7 @@ from .multi_strategy import StrategyDecision
 from .trading_profiles import TradingProfile
 
 
-AI_PATTERN_MODEL_VERSION = "AI-PATTERN-v3-ADAPTIVE-WINDOW"
+AI_PATTERN_MODEL_VERSION = "AI-PATTERN-v4-MARKET-CONTEXT"
 
 
 @dataclass(frozen=True)
@@ -184,6 +184,19 @@ class AIPatternTrader:
             profile=profile,
         )
 
+        ignition_score = float(current.get("ignition_score", 0.0) or 0.0)
+        exhaustion_score = float(current.get("exhaustion_score", 0.0) or 0.0)
+        compression_ratio = float(current.get("compression_ratio", 1.0) or 1.0)
+        if (
+            proposed_action == "BUY"
+            and exhaustion_score > self.settings.exhaustion_max_entry_score
+        ):
+            risk_status = "BLOCKED"
+            risk_reason = (
+                "The current candle context is classified as possible exhaustion "
+                f"({exhaustion_score:.4f}), above the configured entry limit."
+            )
+
         final_signal = proposed_action if risk_status == "APPROVED" else "HOLD"
         if mode == "OBSERVATION":
             final_signal = "HOLD"
@@ -225,6 +238,9 @@ class AIPatternTrader:
             f"expected_net_return={expected_net_return:.6f}",
             f"confidence={confidence:.6f}",
             f"worst_similar_adverse_return={worst_adverse_return:.6f}",
+            f"ignition_score={ignition_score:.6f}",
+            f"exhaustion_score={exhaustion_score:.6f}",
+            f"compression_ratio={compression_ratio:.6f}",
             f"proposed_action={proposed_action}",
             f"risk_status={risk_status}",
             f"risk_reason={risk_reason}",
@@ -354,6 +370,13 @@ class AIPatternTrader:
             "volatility_ratio",
             "volume_zscore_20",
             "trend_strength",
+            "range_ratio_20",
+            "body_ratio",
+            "compression_ratio",
+            "trend_age_up",
+            "extension_ema20_atr",
+            "ignition_score",
+            "exhaustion_score",
             *[f"return_lag_{lag}" for lag in range(1, 9)],
             *[f"body_lag_{lag}" for lag in range(1, 5)],
             *[f"range_lag_{lag}" for lag in range(1, 5)],

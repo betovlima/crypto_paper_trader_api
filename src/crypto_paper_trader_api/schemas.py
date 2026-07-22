@@ -284,6 +284,13 @@ class PublicConfiguration(BaseModel):
     buy_probability_threshold: float
     sell_probability_threshold: float
     min_technical_confirmations: int
+    market_context_lookback: int
+    market_context_compression_window: int
+    ignition_min_score: float
+    exhaustion_max_entry_score: float
+    breakout_require_ignition: bool
+    crossover_block_exhaustion: bool
+    expectancy_min_trades: int
     stop_atr_multiplier: float
     stop_loss_min_pct: float
     stop_loss_max_pct: float
@@ -302,7 +309,7 @@ class PublicConfiguration(BaseModel):
     ai_pattern_min_expected_net_return: float
     ai_pattern_min_confidence: float
     ai_pattern_max_spread_rate: float
-    ai_pattern_model_version: str = "AI-PATTERN-v1"
+    ai_pattern_model_version: str = "AI-PATTERN-v4-MARKET-CONTEXT"
     ai_scanner_enabled: bool
     ai_scanner_interval_seconds: int
     ai_scanner_universe_size: int
