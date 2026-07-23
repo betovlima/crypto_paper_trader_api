@@ -1268,7 +1268,7 @@ class Lbr310AntiContextStrategy:
 
 
 class AdaptiveStrategySelector:
-    """Researches, validates and executes a generated strategy for the selected market."""
+    """Finds selected-asset patterns and preserves the current validated champion."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -1286,6 +1286,15 @@ class AdaptiveStrategySelector:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
 
+    @staticmethod
+    def _champion_is_compatible(
+        specification: StrategySpecification | None,
+        regime: str,
+    ) -> bool:
+        if specification is None or regime == "TRANSITION":
+            return False
+        return regime in specification.allowed_regimes
+
     def _needs_research(
         self,
         account: StrategyAccount,
@@ -1293,12 +1302,52 @@ class AdaptiveStrategySelector:
         now: datetime,
     ) -> bool:
         current_spec = StrategySpecification.from_json(account.selector_strategy_spec_json)
+        if account.selector_model_version != self.settings.selector_model_version:
+            return True
         if current_spec is None:
             return True
         if account.selector_market_regime != regime:
             return True
         next_research = self._as_utc(account.selector_next_research_at)
         return next_research is None or now >= next_research
+
+    def _hold_decision(
+        self,
+        account: StrategyAccount,
+        regime: str,
+        reason: str,
+        status: str,
+    ) -> StrategyDecision:
+        return StrategyDecision(
+            "HOLD",
+            "RESEARCH_SELECTOR",
+            "HOLD",
+            0,
+            reason,
+            selector_selected_strategy=account.selector_selected_strategy,
+            selector_market_regime=regime,
+            selector_confidence=account.selector_confidence,
+            selector_expected_net_return=account.selector_expected_net_return,
+            selector_candidate_scores=account.selector_candidate_scores,
+            selector_model_version=self.settings.selector_model_version,
+            selector_active_strategy_name=account.selector_active_strategy_name,
+            selector_strategy_origin=account.selector_strategy_origin,
+            selector_research_status=status,
+            selector_research_summary=reason,
+            selector_validation_score=account.selector_validation_score,
+            selector_profit_factor=account.selector_profit_factor,
+            selector_max_drawdown_pct=account.selector_max_drawdown_pct,
+            selector_net_return=account.selector_net_return,
+            selector_trade_count=account.selector_trade_count,
+            selector_next_research_at=account.selector_next_research_at,
+            selector_strategy_spec_json=account.selector_strategy_spec_json,
+            selector_source_urls_json=account.selector_source_urls_json,
+            selector_ai_provider=account.selector_ai_provider,
+            selector_ai_model=account.selector_ai_model,
+            selector_ai_review_status=account.selector_ai_review_status,
+            selector_ai_review_score=account.selector_ai_review_score,
+            selector_ai_review_summary=account.selector_ai_review_summary,
+        )
 
     def decide(
         self,
@@ -1318,8 +1367,10 @@ class AdaptiveStrategySelector:
         active_spec = StrategySpecification.from_json(account.selector_strategy_spec_json)
 
         # An open paper position always remains attached to the strategy that opened it.
-        # Research can replace the active strategy only after the position is flat.
+        # Challenger research can replace the champion only while the portfolio is flat.
         if not account.has_open_position and self._needs_research(account, regime, now):
+            champion_spec = active_spec
+            champion_score = float(account.selector_validation_score or 0.0)
             outcome = self.engine.research(
                 market=market,
                 regime=regime,
@@ -1344,64 +1395,79 @@ class AdaptiveStrategySelector:
             account.selector_ai_review_summary = outcome.ai_review_summary
 
             if outcome.specification is None or outcome.metrics is None:
-                account.selector_selected_strategy = None
-                account.selector_active_strategy_name = None
-                account.selector_strategy_origin = None
-                account.selector_strategy_spec_json = None
-                account.selector_validation_score = None
-                account.selector_profit_factor = None
-                account.selector_max_drawdown_pct = None
-                account.selector_net_return = None
-                account.selector_trade_count = None
-                return StrategyDecision(
-                    "HOLD", "RESEARCH_SELECTOR", "HOLD", 0,
-                    outcome.research_summary,
-                    selector_market_regime=regime,
-                    selector_candidate_scores=outcome.candidate_scores_json,
-                    selector_model_version=self.settings.selector_model_version,
-                    selector_research_status=outcome.research_status,
-                    selector_research_summary=outcome.research_summary,
-                    selector_next_research_at=outcome.next_research_at,
-                    selector_source_urls_json=outcome.source_urls_json,
-                    selector_ai_provider=outcome.ai_provider,
-                    selector_ai_model=outcome.ai_model,
-                    selector_ai_review_status=outcome.ai_review_status,
-                    selector_ai_review_score=outcome.ai_review_score,
-                    selector_ai_review_summary=outcome.ai_review_summary,
+                if champion_spec is None:
+                    account.selector_selected_strategy = None
+                    account.selector_active_strategy_name = None
+                    account.selector_strategy_origin = None
+                    account.selector_strategy_spec_json = None
+                    account.selector_validation_score = None
+                    account.selector_profit_factor = None
+                    account.selector_max_drawdown_pct = None
+                    account.selector_net_return = None
+                    account.selector_trade_count = None
+                    return self._hold_decision(
+                        account,
+                        regime,
+                        outcome.research_summary,
+                        outcome.research_status,
+                    )
+
+                active_spec = champion_spec
+                if self._champion_is_compatible(champion_spec, regime):
+                    account.selector_research_status = "CHAMPION_RETAINED"
+                    account.selector_research_summary = "NO_CHALLENGER_PASSED_CHAMPION_RETAINED"
+                else:
+                    account.selector_research_status = "CHAMPION_SUSPENDED"
+                    account.selector_research_summary = "CHAMPION_SUSPENDED_FOR_CURRENT_REGIME"
+            else:
+                challenger = outcome.specification
+                metrics = outcome.metrics
+                champion_compatible = self._champion_is_compatible(champion_spec, regime)
+                improvement_required = (
+                    champion_score + self.settings.adaptive_research_champion_min_improvement
+                )
+                keep_champion = (
+                    champion_spec is not None
+                    and champion_spec.code != challenger.code
+                    and champion_compatible
+                    and metrics.score < improvement_required
                 )
 
-            active_spec = outcome.specification
-            metrics = outcome.metrics
-            account.selector_selected_strategy = active_spec.code
-            account.selector_active_strategy_name = active_spec.name
-            account.selector_strategy_origin = active_spec.origin
-            account.selector_strategy_spec_json = active_spec.to_json()
-            account.selector_validation_score = metrics.score
-            account.selector_profit_factor = metrics.profit_factor
-            account.selector_max_drawdown_pct = metrics.max_drawdown_pct
-            account.selector_net_return = metrics.net_return
-            account.selector_trade_count = metrics.trade_count
-            account.selector_confidence = min(max(metrics.score / 100.0, 0.0), 1.0)
-            account.selector_expected_net_return = metrics.net_return
+                if keep_champion:
+                    active_spec = champion_spec
+                    account.selector_research_status = "CHAMPION_RETAINED"
+                    account.selector_research_summary = "CHALLENGER_DID_NOT_BEAT_CHAMPION"
+                else:
+                    active_spec = challenger
+                    account.selector_selected_strategy = challenger.code
+                    account.selector_active_strategy_name = challenger.name
+                    account.selector_strategy_origin = challenger.origin
+                    account.selector_strategy_spec_json = challenger.to_json()
+                    account.selector_validation_score = metrics.score
+                    account.selector_profit_factor = metrics.profit_factor
+                    account.selector_max_drawdown_pct = metrics.max_drawdown_pct
+                    account.selector_net_return = metrics.net_return
+                    account.selector_trade_count = metrics.trade_count
+                    account.selector_confidence = min(max(metrics.score / 100.0, 0.0), 1.0)
+                    account.selector_expected_net_return = metrics.net_return
+                    account.selector_research_status = "CHALLENGER_SELECTED"
+                    account.selector_research_summary = "VALIDATED_CANDIDATE_SELECTED"
 
         if active_spec is None:
-            reason = account.selector_research_summary or (
-                "No generated strategy has passed the validation requirements yet."
+            reason = account.selector_research_summary or "NO_CANDIDATE_PASSED_HARD_GATES"
+            return self._hold_decision(
+                account,
+                regime,
+                reason,
+                account.selector_research_status or "WAITING_FOR_VALID_STRATEGY",
             )
-            return StrategyDecision(
-                "HOLD", "RESEARCH_SELECTOR", "HOLD", 0, reason,
-                selector_market_regime=regime,
-                selector_candidate_scores=account.selector_candidate_scores,
-                selector_model_version=self.settings.selector_model_version,
-                selector_research_status=account.selector_research_status or "WAITING_FOR_VALID_STRATEGY",
-                selector_research_summary=reason,
-                selector_next_research_at=account.selector_next_research_at,
-                selector_source_urls_json=account.selector_source_urls_json,
-                selector_ai_provider=account.selector_ai_provider,
-                selector_ai_model=account.selector_ai_model,
-                selector_ai_review_status=account.selector_ai_review_status,
-                selector_ai_review_score=account.selector_ai_review_score,
-                selector_ai_review_summary=account.selector_ai_review_summary,
+
+        if account.selector_research_status == "CHAMPION_SUSPENDED":
+            return self._hold_decision(
+                account,
+                regime,
+                "CHAMPION_SUSPENDED_FOR_CURRENT_REGIME",
+                "CHAMPION_SUSPENDED",
             )
 
         live = self.engine.executor.live_decision(

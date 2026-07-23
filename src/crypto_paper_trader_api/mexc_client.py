@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+import logging
 from typing import Any
 
 import httpx
@@ -9,6 +10,8 @@ import pandas as pd
 
 from .config import Settings
 from .execution_costs import DepthSnapshot, MarketRules
+
+logger = logging.getLogger(__name__)
 
 
 # Internal timeframe names are retained for database/backward compatibility. MEXC's
@@ -51,7 +54,7 @@ class MEXCPublicClient:
         self._client = httpx.AsyncClient(
             base_url=settings.mexc_base_url.rstrip("/"),
             timeout=settings.http_timeout_seconds,
-            headers={"User-Agent": "crypto-paper-trader/0.16.9"},
+            headers={"User-Agent": "crypto-paper-trader/0.16.17"},
         )
 
     async def close(self) -> None:
@@ -153,36 +156,96 @@ class MEXCPublicClient:
         start_time_ms: int | None = None,
         end_time_ms: int | None = None,
     ) -> pd.DataFrame:
-        """Return up to ``limit`` candles, transparently paging MEXC batches.
+        """Return up to ``limit`` candles with bounded historical pagination.
 
-        The MEXC Spot endpoint accepts at most 1,000 candles per request. The
-        application may need a longer history for adaptive AI training, so this
-        method walks backwards in time and merges as many batches as necessary.
+        MEXC accepts at most 1,000 rows per request. The latest page is requested
+        without time bounds when the caller did not provide them. Every historical
+        page then sends an explicit ``startTime`` and ``endTime`` window. This avoids
+        the partial-history/stalled-cursor behavior observed on some Spot pairs when
+        only ``endTime`` is supplied.
         """
         if period not in MEXC_INTERVALS:
             raise ValueError(f"Unsupported MEXC timeframe: {period}")
         if not 1 <= limit <= 50_000:
             raise ValueError("limit must be between 1 and 50000")
+        if start_time_ms is not None and end_time_ms is not None and start_time_ms > end_time_ms:
+            raise ValueError("start_time_ms must be less than or equal to end_time_ms")
 
-        remaining = limit
-        cursor_end_ms = end_time_ms
+        interval_ms = TIMEFRAME_SECONDS[period] * 1000
+        cursor_end_ms = int(end_time_ms) if end_time_ms is not None else None
+        use_unbounded_latest_page = start_time_ms is None and end_time_ms is None
         frames: list[pd.DataFrame] = []
-        oldest_seen_ms: int | None = None
+        collected = 0
+        page_number = 0
+        empty_windows = 0
+        max_pages = max(20, ((limit + 999) // 1000) * 20)
 
-        while remaining > 0:
-            batch_limit = min(1000, remaining)
-            batch = await self._get_candle_batch(
-                market=market,
-                period=period,
-                limit=batch_limit,
-                closed_only=closed_only,
-                start_time_ms=start_time_ms,
-                end_time_ms=cursor_end_ms,
-            )
+        while collected < limit and page_number < max_pages:
+            remaining = limit - collected
+            batch_limit = min(1000, max(1, remaining))
+            page_number += 1
 
-            if batch.empty:
-                break
+            if use_unbounded_latest_page and page_number == 1:
+                page_start_ms = None
+                page_end_ms = None
+            else:
+                if cursor_end_ms is None:
+                    # The first bounded page starts immediately before the oldest row
+                    # already collected. This branch is reached only after a valid page.
+                    if not frames:
+                        raise MEXCAPIError(
+                            f"Unable to establish the historical cursor for {market} ({period})."
+                        )
+                    oldest = pd.Timestamp(
+                        pd.concat(frames, ignore_index=True)["timestamp"].min()
+                    )
+                    cursor_end_ms = int(oldest.timestamp() * 1000) - 1
+                page_end_ms = cursor_end_ms
+                window_span_ms = interval_ms * batch_limit
+                page_start_ms = max(0, page_end_ms - window_span_ms)
+                if start_time_ms is not None:
+                    page_start_ms = max(int(start_time_ms), page_start_ms)
 
+            try:
+                batch = await self.get_candle_page(
+                    market=market,
+                    period=period,
+                    limit=batch_limit,
+                    closed_only=closed_only,
+                    start_time_ms=page_start_ms,
+                    end_time_ms=page_end_ms,
+                )
+            except MEXCAPIError as exc:
+                no_data = (
+                    "no candles" in str(exc).lower()
+                    or "no closed candles" in str(exc).lower()
+                    or "no historical candle page" in str(exc).lower()
+                )
+                if not no_data:
+                    if frames:
+                        logger.warning(
+                            "MEXC candle pagination stopped after %s page(s) for %s %s: %s",
+                            page_number - 1,
+                            market,
+                            period,
+                            exc,
+                        )
+                        break
+                    raise
+
+                if page_start_ms is None:
+                    if frames:
+                        break
+                    raise
+                empty_windows += 1
+                if page_start_ms <= 0 or (start_time_ms is not None and page_start_ms <= start_time_ms):
+                    break
+                cursor_end_ms = page_start_ms - 1
+                if empty_windows >= 12:
+                    break
+                continue
+
+            empty_windows = 0
             frames.append(batch)
             merged = (
                 pd.concat(frames, ignore_index=True)
@@ -190,20 +253,36 @@ class MEXCPublicClient:
                 .drop_duplicates(subset=["timestamp"], keep="last")
             )
             merged.reset_index(drop=True, inplace=True)
+            collected = len(merged)
+
+            logger.debug(
+                "MEXC candle page market=%s timeframe=%s page=%s rows=%s collected=%s/%s "
+                "start_ms=%s end_ms=%s",
+                market,
+                period,
+                page_number,
+                len(batch),
+                collected,
+                limit,
+                page_start_ms,
+                page_end_ms,
+            )
+
+            if collected >= limit:
+                break
 
             oldest_timestamp = pd.Timestamp(batch["timestamp"].min())
             oldest_ms = int(oldest_timestamp.timestamp() * 1000)
+            if page_start_ms is None:
+                cursor_end_ms = oldest_ms - 1
+            else:
+                # Advance by the complete requested window, even if MEXC returned a
+                # partial page. This prevents sparse or repeated batches from stalling.
+                cursor_end_ms = min(oldest_ms - 1, page_start_ms - 1)
 
-            if oldest_seen_ms is not None and oldest_ms >= oldest_seen_ms:
+            if cursor_end_ms <= 0:
                 break
-
-            oldest_seen_ms = oldest_ms
-            cursor_end_ms = oldest_ms - 1
-            remaining = limit - len(merged)
-
             if start_time_ms is not None and cursor_end_ms < start_time_ms:
-                break
-            if len(batch) < batch_limit:
                 break
 
         if not frames:
@@ -217,6 +296,65 @@ class MEXCPublicClient:
         )
         result.reset_index(drop=True, inplace=True)
         return result
+
+
+    async def get_candle_page(
+        self,
+        market: str,
+        period: str,
+        *,
+        limit: int = 1000,
+        closed_only: bool = True,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+    ) -> pd.DataFrame:
+        """Fetch one historical page with a bounded-request fallback.
+
+        Some MEXC Spot pairs return an empty bounded page even though older candles
+        exist before ``endTime``. The fallback repeats the request with ``endTime``
+        only and still applies the upper bound locally. This method never paginates;
+        callers control the historical cursor explicitly.
+        """
+        if period not in MEXC_INTERVALS:
+            raise ValueError(f"Unsupported MEXC timeframe: {period}")
+        if not 1 <= limit <= 1000:
+            raise ValueError("MEXC candle page limit must be between 1 and 1000")
+        if start_time_ms is not None and end_time_ms is not None and start_time_ms > end_time_ms:
+            raise ValueError("start_time_ms must be less than or equal to end_time_ms")
+
+        attempts: list[tuple[int | None, int | None]] = [(start_time_ms, end_time_ms)]
+        if start_time_ms is not None and end_time_ms is not None:
+            attempts.append((None, end_time_ms))
+
+        errors: list[str] = []
+        for page_start, page_end in attempts:
+            try:
+                frame = await self._get_candle_batch(
+                    market=market,
+                    period=period,
+                    limit=limit,
+                    closed_only=closed_only,
+                    start_time_ms=page_start,
+                    end_time_ms=page_end,
+                )
+                if end_time_ms is not None:
+                    upper = pd.to_datetime(int(end_time_ms), unit="ms", utc=True)
+                    frame = frame.loc[frame["timestamp"] <= upper].copy()
+                frame = (
+                    frame.sort_values("timestamp")
+                    .drop_duplicates(subset=["timestamp"], keep="last")
+                    .tail(limit)
+                    .reset_index(drop=True)
+                )
+                if not frame.empty:
+                    return frame
+            except MEXCAPIError as exc:
+                errors.append(str(exc))
+
+        detail = "; ".join(dict.fromkeys(errors)) or "no rows returned"
+        raise MEXCAPIError(
+            f"MEXC returned no historical candle page for {market} ({period}): {detail}"
+        )
 
     async def _get_candle_batch(
         self,
@@ -271,6 +409,17 @@ class MEXCPublicClient:
             .sort_values("timestamp")
             .drop_duplicates(subset=["timestamp"], keep="last")
         )
+        frame.reset_index(drop=True, inplace=True)
+
+        # Never trust the remote endpoint to honor pagination bounds perfectly.
+        # Client-side filtering prevents repeated recent rows from contaminating an
+        # older page when a deployment ignores one of the time parameters.
+        if start_time_ms is not None:
+            lower = pd.to_datetime(int(start_time_ms), unit="ms", utc=True)
+            frame = frame.loc[frame["timestamp"] >= lower].copy()
+        if end_time_ms is not None:
+            upper = pd.to_datetime(int(end_time_ms), unit="ms", utc=True)
+            frame = frame.loc[frame["timestamp"] <= upper].copy()
         frame.reset_index(drop=True, inplace=True)
 
         if closed_only:

@@ -107,6 +107,59 @@ class AICandleRepository:
             "last_candle_at": last_ts,
         }
 
+    def get_state(
+        self,
+        session: Session,
+        market: str,
+        timeframe: str,
+    ) -> AIHistorySyncState | None:
+        return session.scalar(
+            select(AIHistorySyncState).where(
+                AIHistorySyncState.market == market,
+                AIHistorySyncState.timeframe == timeframe,
+            )
+        )
+
+    def state_snapshot(
+        self,
+        session: Session,
+        market: str,
+        timeframe: str,
+    ) -> dict[str, object]:
+        state = self.get_state(session, market, timeframe)
+        coverage = self.coverage(session, market, timeframe)
+        if state is None:
+            return {
+                **coverage,
+                "target_candles": 0,
+                "missing_intervals": 0,
+                "status": "PENDING",
+                "pages_attempted": 0,
+                "pages_succeeded": 0,
+                "candles_added_last_attempt": 0,
+                "empty_windows_last_attempt": 0,
+                "last_attempt_at": None,
+                "next_retry_at": None,
+                "last_error": None,
+                "updated_at": None,
+            }
+        return {
+            "target_candles": state.target_candles,
+            "stored_candles": state.stored_candles,
+            "first_candle_at": state.first_candle_at,
+            "last_candle_at": state.last_candle_at,
+            "missing_intervals": state.missing_intervals,
+            "status": state.status,
+            "pages_attempted": state.pages_attempted,
+            "pages_succeeded": state.pages_succeeded,
+            "candles_added_last_attempt": state.candles_added_last_attempt,
+            "empty_windows_last_attempt": state.empty_windows_last_attempt,
+            "last_attempt_at": state.last_attempt_at,
+            "next_retry_at": state.next_retry_at,
+            "last_error": state.last_error,
+            "updated_at": state.updated_at,
+        }
+
     def save_state(
         self,
         session: Session,
@@ -116,14 +169,15 @@ class AICandleRepository:
         status: str,
         missing: int = 0,
         error: str | None = None,
+        pages_attempted: int = 0,
+        pages_succeeded: int = 0,
+        candles_added: int = 0,
+        empty_windows: int = 0,
+        last_attempt_at: datetime | None = None,
+        next_retry_at: datetime | None = None,
     ) -> AIHistorySyncState:
         coverage = self.coverage(session, market, timeframe)
-        state = session.scalar(
-            select(AIHistorySyncState).where(
-                AIHistorySyncState.market == market,
-                AIHistorySyncState.timeframe == timeframe,
-            )
-        )
+        state = self.get_state(session, market, timeframe)
         if state is None:
             state = AIHistorySyncState(
                 market=market,
@@ -138,6 +192,12 @@ class AICandleRepository:
         state.last_candle_at = coverage["last_candle_at"]
         state.missing_intervals = missing
         state.status = status
+        state.pages_attempted = int(pages_attempted)
+        state.pages_succeeded = int(pages_succeeded)
+        state.candles_added_last_attempt = int(candles_added)
+        state.empty_windows_last_attempt = int(empty_windows)
+        state.last_attempt_at = last_attempt_at
+        state.next_retry_at = next_retry_at
         state.last_error = error
         state.updated_at = datetime.now(timezone.utc)
         return state

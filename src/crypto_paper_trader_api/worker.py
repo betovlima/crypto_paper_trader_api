@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from collections.abc import AsyncIterator
 import logging
 from datetime import datetime, timedelta, timezone
@@ -65,6 +67,10 @@ from .trading_profiles import (
 
 logger = logging.getLogger(__name__)
 
+# EMA 200 and the remaining rolling indicators consume the beginning of a raw candle
+# series. Keep a deliberate margin above the selector's minimum clean-candle requirement.
+ADAPTIVE_RESEARCH_HISTORY_BUFFER_CANDLES = 300
+
 
 class TraderWorker:
     """Runs one market experiment with multiple independent paper strategies."""
@@ -93,9 +99,12 @@ class TraderWorker:
         self.ema9_strategy = self.ema9_classic_strategy
         self.broker = MultiStrategyPaperBroker(settings)
         self._task: asyncio.Task[None] | None = None
+        self._history_task: asyncio.Task[None] | None = None
         self._wake_event = asyncio.Event()
+        self._history_wake_event = asyncio.Event()
         self._shutdown_event = asyncio.Event()
         self._processing_lock = asyncio.Lock()
+        self._history_sync_lock = asyncio.Lock()
 
     @property
     def is_running(self) -> bool:
@@ -106,21 +115,29 @@ class TraderWorker:
             return
         self._shutdown_event.clear()
         self._task = asyncio.create_task(self._run_loop(), name="crypto-paper-trader-worker")
+        self._history_task = asyncio.create_task(
+            self._run_selector_history_loop(),
+            name="adaptive-selector-history-worker",
+        )
 
     async def stop(self) -> None:
         self._shutdown_event.set()
         self._wake_event.set()
-        if self._task:
+        self._history_wake_event.set()
+        for task in (self._task, self._history_task):
+            if task is None:
+                continue
             try:
-                await asyncio.wait_for(self._task, timeout=15)
+                await asyncio.wait_for(task, timeout=20)
             except asyncio.TimeoutError:
-                self._task.cancel()
+                task.cancel()
             except asyncio.CancelledError:
                 pass
         await self.client.close()
 
     def wake(self) -> None:
         self._wake_event.set()
+        self._history_wake_event.set()
 
     @asynccontextmanager
     async def exclusive_processing(self) -> AsyncIterator[None]:
@@ -189,6 +206,444 @@ class TraderWorker:
             except asyncio.TimeoutError:
                 pass
         logger.info("PAPER_ONLY multi-strategy worker stopped")
+
+    async def _run_selector_history_loop(self) -> None:
+        logger.info(
+            "Adaptive selector history worker started; retry interval=%ss",
+            self.settings.ai_history_backfill_retry_seconds,
+        )
+        while not self._shutdown_event.is_set():
+            try:
+                await self._refresh_waiting_selector_history()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Unexpected adaptive selector history-loop error")
+
+            try:
+                self._history_wake_event.clear()
+                await asyncio.wait_for(
+                    self._history_wake_event.wait(),
+                    timeout=self.settings.ai_history_backfill_retry_seconds,
+                )
+            except asyncio.TimeoutError:
+                pass
+        logger.info("Adaptive selector history worker stopped")
+
+    async def retry_adaptive_selector_history(
+        self,
+        experiment_id: str,
+    ) -> dict[str, object]:
+        """Force one history/backtest refresh without waiting for a new candle."""
+        return await self._refresh_waiting_selector_history(
+            force=True,
+            experiment_id=experiment_id,
+        )
+
+    async def retry_adaptive_selector_research(
+        self,
+        experiment_id: str,
+    ) -> dict[str, object]:
+        """Reload the OpenAI secret and force a complete adaptive research cycle."""
+
+        return await self._refresh_waiting_selector_history(
+            force=True,
+            force_research=True,
+            reload_openai_configuration=True,
+            experiment_id=experiment_id,
+        )
+
+    async def _refresh_waiting_selector_history(
+        self,
+        *,
+        force: bool = False,
+        force_research: bool = False,
+        reload_openai_configuration: bool = False,
+        experiment_id: str | None = None,
+    ) -> dict[str, object]:
+        async with self._processing_lock:
+            with SessionLocal() as session:
+                query = select(Experiment).where(Experiment.status == "RUNNING")
+                if experiment_id is not None:
+                    query = query.where(Experiment.id == experiment_id)
+                experiment = session.scalar(
+                    query.order_by(Experiment.started_at.desc()).limit(1)
+                )
+                if experiment is None:
+                    if experiment_id is not None:
+                        raise LookupError("No running experiment was found for the requested id.")
+                    return {"status": "NO_RUNNING_EXPERIMENT"}
+
+                ensure_strategy_accounts(session, experiment)
+                session.flush()
+                selector_account = self._strategy_account_by_code(
+                    self._strategy_accounts(session, experiment.id),
+                    ADAPTIVE_STRATEGY_SELECTOR,
+                )
+                openai_runtime: dict[str, object] | None = None
+                if reload_openai_configuration:
+                    openai_runtime = self._reload_adaptive_research_configuration()
+
+                now = datetime.now(timezone.utc)
+                if force_research:
+                    # Force _needs_research even when a champion exists and the regular
+                    # review deadline is still in the future. Open positions remain locked.
+                    selector_account.selector_next_research_at = now - timedelta(seconds=1)
+                    selector_account.selector_model_version = None
+                    selector_account.selector_last_error = None
+
+                due_at = self._as_utc(selector_account.selector_next_research_at)
+                waiting_for_history = (
+                    selector_account.selector_research_status == "WAITING_FOR_HISTORY"
+                )
+                if not force and (
+                    not waiting_for_history
+                    or (due_at is not None and now < due_at)
+                ):
+                    return self._selector_history_response(
+                        experiment,
+                        selector_account,
+                        self.ai_history_service.diagnostics(
+                            experiment.market,
+                            experiment.execution_timeframe,
+                        ),
+                    )
+
+                result = await self._refresh_selector_account_from_history(
+                    session=session,
+                    experiment=experiment,
+                    selector_account=selector_account,
+                    now=now,
+                )
+                session.commit()
+                if openai_runtime is not None:
+                    result.update(openai_runtime)
+                return result
+
+    async def _refresh_selector_account_from_history(
+        self,
+        *,
+        session: Session,
+        experiment: Experiment,
+        selector_account: StrategyAccount,
+        now: datetime,
+    ) -> dict[str, object]:
+        selector_history_target = self._selector_history_target()
+        execution_candles, trend_candles = await asyncio.gather(
+            self.client.get_candles(
+                experiment.market,
+                experiment.execution_timeframe,
+                limit=self._selector_recent_fetch_limit(),
+                closed_only=True,
+            ),
+            self.client.get_candles(
+                experiment.market,
+                experiment.trend_timeframe,
+                limit=500,
+                closed_only=True,
+            ),
+        )
+        self._persist_candles(
+            session,
+            experiment.id,
+            experiment.market,
+            experiment.execution_timeframe,
+            execution_candles,
+        )
+        self._persist_candles(
+            session,
+            experiment.id,
+            experiment.market,
+            experiment.trend_timeframe,
+            trend_candles,
+        )
+
+        self.ai_history_service.client = self.client
+        async with self._history_sync_lock:
+            ai_execution_candles = await self.ai_history_service.synchronize(
+                experiment.market,
+                experiment.execution_timeframe,
+                execution_candles,
+                minimum_candles=selector_history_target,
+            )
+        ai_execution_indicators = add_indicators(
+            ai_execution_candles,
+            context_lookback=self.settings.market_context_lookback,
+            compression_window=self.settings.market_context_compression_window,
+        ).reset_index(drop=True)
+        trend_indicators = add_indicators(
+            trend_candles,
+            context_lookback=self.settings.market_context_lookback,
+            compression_window=self.settings.market_context_compression_window,
+        ).reset_index(drop=True)
+        current_row = latest_complete_row(ai_execution_indicators)
+        trend_row = latest_complete_row(trend_indicators)
+        current_index = int(current_row.name)
+        costs = ExecutionCosts(
+            maker_fee_rate=float(experiment.maker_fee_rate),
+            taker_fee_rate=float(experiment.taker_fee_rate),
+            spread_rate=float(
+                experiment.last_spread_rate or self.settings.fallback_spread_rate
+            ),
+            slippage_rate=self.settings.slippage_rate,
+            fee_source=experiment.fee_source,
+        )
+
+        decision = await asyncio.to_thread(
+            self.adaptive_selector.decide,
+            selector_account,
+            current_row,
+            trend_row,
+            costs,
+            ai_execution_indicators,
+            current_index,
+            experiment.market,
+            experiment.execution_timeframe,
+            experiment.trend_timeframe,
+            now,
+        )
+        decision = self._with_history_sync_diagnostics(
+            decision,
+            experiment.market,
+            experiment.execution_timeframe,
+        )
+        self._apply_selector_decision(selector_account, decision)
+        sync = self.ai_history_service.diagnostics(
+            experiment.market,
+            experiment.execution_timeframe,
+        )
+        if decision.selector_research_status == "WAITING_FOR_HISTORY":
+            selector_account.selector_last_error = None
+            selector_account.last_event = "HISTORY_BACKFILL"
+            selector_account.last_status_message = "Adaptive history refresh completed."
+        else:
+            selector_account.last_event = "SELECTOR_RESEARCH_REFRESH"
+            selector_account.last_status_message = (
+                "Adaptive strategy research refreshed without waiting for a new candle."
+            )
+
+        experiment.last_market_event = "ADAPTIVE_HISTORY_REFRESH"
+        experiment.error_message = None
+        return self._selector_history_response(experiment, selector_account, sync)
+
+    @staticmethod
+    def _apply_selector_decision(
+        selector_account: StrategyAccount,
+        selector_decision: StrategyDecision,
+    ) -> None:
+        selector_account.selector_selected_strategy = (
+            selector_decision.selector_selected_strategy
+            or selector_account.selector_selected_strategy
+        )
+        selector_account.selector_market_regime = selector_decision.selector_market_regime
+        selector_account.selector_confidence = selector_decision.selector_confidence
+        selector_account.selector_expected_net_return = (
+            selector_decision.selector_expected_net_return
+        )
+        selector_account.selector_candidate_scores = (
+            selector_decision.selector_candidate_scores
+        )
+        selector_account.selector_model_version = selector_decision.selector_model_version
+        selector_account.selector_active_strategy_name = (
+            selector_decision.selector_active_strategy_name
+            or selector_account.selector_active_strategy_name
+        )
+        selector_account.selector_strategy_origin = (
+            selector_decision.selector_strategy_origin
+            or selector_account.selector_strategy_origin
+        )
+        selector_account.selector_research_status = (
+            selector_decision.selector_research_status
+            or selector_account.selector_research_status
+        )
+        selector_account.selector_research_summary = (
+            selector_decision.selector_research_summary
+            or selector_account.selector_research_summary
+        )
+        if selector_decision.selector_validation_score is not None:
+            selector_account.selector_validation_score = (
+                selector_decision.selector_validation_score
+            )
+        if selector_decision.selector_profit_factor is not None:
+            selector_account.selector_profit_factor = selector_decision.selector_profit_factor
+        if selector_decision.selector_max_drawdown_pct is not None:
+            selector_account.selector_max_drawdown_pct = (
+                selector_decision.selector_max_drawdown_pct
+            )
+        if selector_decision.selector_net_return is not None:
+            selector_account.selector_net_return = selector_decision.selector_net_return
+        if selector_decision.selector_trade_count is not None:
+            selector_account.selector_trade_count = selector_decision.selector_trade_count
+        selector_account.selector_next_research_at = (
+            selector_decision.selector_next_research_at
+            or selector_account.selector_next_research_at
+        )
+        selector_account.selector_strategy_spec_json = (
+            selector_decision.selector_strategy_spec_json
+            or selector_account.selector_strategy_spec_json
+        )
+        selector_account.selector_source_urls_json = (
+            selector_decision.selector_source_urls_json
+            or selector_account.selector_source_urls_json
+        )
+        selector_account.selector_ai_provider = (
+            selector_decision.selector_ai_provider
+            or selector_account.selector_ai_provider
+        )
+        selector_account.selector_ai_model = (
+            selector_decision.selector_ai_model
+            or selector_account.selector_ai_model
+        )
+        selector_account.selector_ai_review_status = (
+            selector_decision.selector_ai_review_status
+            or selector_account.selector_ai_review_status
+        )
+        if selector_decision.selector_ai_review_score is not None:
+            selector_account.selector_ai_review_score = (
+                selector_decision.selector_ai_review_score
+            )
+        selector_account.selector_ai_review_summary = (
+            selector_decision.selector_ai_review_summary
+            or selector_account.selector_ai_review_summary
+        )
+
+    def _reload_adaptive_research_configuration(self) -> dict[str, object]:
+        """Reload OpenAI/adaptive settings without requiring a server restart.
+
+        Uvicorn does not necessarily restart when only a local .env file changes.
+        Rebuilding the selector here makes the administrative retry use the latest
+        project secret while leaving the running experiment and SQLite state intact.
+        """
+
+        refreshed = Settings()
+        adaptive_fields = (
+            "openai_api_key",
+            "adaptive_research_web_enabled",
+            "adaptive_research_openai_model",
+            "adaptive_research_ai_review_enabled",
+            "adaptive_research_openai_review_model",
+            "adaptive_research_web_timeout_seconds",
+            "adaptive_research_openai_timeout_seconds",
+            "adaptive_research_openai_attempts",
+            "adaptive_research_interval_hours",
+            "adaptive_research_retry_minutes",
+            "adaptive_research_transition_retry_minutes",
+            "adaptive_research_min_candles",
+            "adaptive_research_target_candles",
+            "adaptive_research_max_history_candles",
+            "adaptive_pattern_window_candles",
+            "adaptive_pattern_horizon_candles",
+            "adaptive_pattern_neighbors",
+            "adaptive_research_validation_rows",
+            "adaptive_research_walk_forward_folds",
+            "adaptive_research_max_candidates",
+            "adaptive_research_min_trades",
+            "adaptive_research_hard_min_trades",
+            "adaptive_research_min_profit_factor",
+            "adaptive_research_max_drawdown_pct",
+            "adaptive_research_min_stability",
+            "adaptive_research_min_validation_score",
+            "adaptive_research_champion_min_improvement",
+            "selector_model_version",
+        )
+        for field_name in adaptive_fields:
+            setattr(self.settings, field_name, getattr(refreshed, field_name))
+
+        self.adaptive_selector = AdaptiveStrategySelector(self.settings)
+        return {
+            "openai_configuration_reloaded": True,
+            "openai_configured": bool(self.settings.openai_api_key),
+            "openai_key_source": self.settings.openai_api_key_source,
+        }
+
+    def _selector_history_response(
+        self,
+        experiment: Experiment,
+        selector_account: StrategyAccount,
+        sync: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            "experiment_id": experiment.id,
+            "market": experiment.market,
+            "timeframe": experiment.execution_timeframe,
+            "selector_status": selector_account.selector_research_status,
+            "selector_summary": selector_account.selector_research_summary,
+            "next_research_at": selector_account.selector_next_research_at,
+            "history": self._json_safe_mapping(sync),
+        }
+
+    def _selector_recent_fetch_limit(self) -> int:
+        """Fetch only the newest API page; persistent history owns the long backfill."""
+
+        return min(
+            1_000,
+            max(500, self.settings.adaptive_research_min_candles),
+        )
+
+    def _selector_history_target(self) -> int:
+        """Long selected-asset history used by adaptive pattern research."""
+
+        return min(
+            self.settings.adaptive_research_max_history_candles,
+            max(
+                self.settings.adaptive_research_target_candles,
+                self.settings.adaptive_research_min_candles
+                + ADAPTIVE_RESEARCH_HISTORY_BUFFER_CANDLES,
+            ),
+        )
+
+    def _with_history_sync_diagnostics(
+        self,
+        decision: StrategyDecision,
+        market: str,
+        timeframe: str,
+    ) -> StrategyDecision:
+        try:
+            details = json.loads(decision.selector_candidate_scores or "{}")
+        except (TypeError, ValueError):
+            details = {}
+        if not isinstance(details, dict):
+            details = {}
+        sync = self._json_safe_mapping(
+            self.ai_history_service.diagnostics(market, timeframe)
+        )
+        details["history_sync"] = sync
+        history = details.get("history")
+        if not isinstance(history, dict):
+            history = {}
+            details["history"] = history
+        history.update(
+            {
+                "stored_candles": sync.get("stored_candles"),
+                "history_target_candles": sync.get("target_candles"),
+                "backfill_status": sync.get("status"),
+                "backfill_pages_attempted": sync.get("pages_attempted"),
+                "backfill_pages_succeeded": sync.get("pages_succeeded"),
+                "candles_added_last_attempt": sync.get("candles_added_last_attempt"),
+                "empty_windows_last_attempt": sync.get("empty_windows_last_attempt"),
+                "backfill_last_attempt_at": sync.get("last_attempt_at"),
+                "backfill_next_retry_at": sync.get("next_retry_at"),
+                "backfill_last_error": sync.get("last_error"),
+            }
+        )
+        return replace(
+            decision,
+            selector_candidate_scores=json.dumps(details, separators=(",", ":")),
+        )
+
+    @staticmethod
+    def _json_safe_mapping(values: dict[str, object]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in values.items():
+            if isinstance(value, datetime):
+                result[key] = TraderWorker._as_utc(value).isoformat()
+            elif isinstance(value, pd.Timestamp):
+                result[key] = (
+                    value.tz_localize("UTC") if value.tzinfo is None else value.tz_convert("UTC")
+                ).isoformat()
+            else:
+                result[key] = value
+        return result
 
     async def _process_active_experiment(self) -> None:
         async with self._processing_lock:
@@ -350,9 +805,13 @@ class TraderWorker:
         costs: ExecutionCosts,
         live_action_accounts: set[int],
     ) -> tuple[bool, dict[str, tuple[str, str]]]:
+        selector_history_target = self._selector_history_target()
         execution_candles, trend_candles = await asyncio.gather(
             self.client.get_candles(
-                experiment.market, experiment.execution_timeframe, limit=1000, closed_only=True
+                experiment.market,
+                experiment.execution_timeframe,
+                limit=self._selector_recent_fetch_limit(),
+                closed_only=True,
             ),
             self.client.get_candles(
                 experiment.market, experiment.trend_timeframe, limit=500, closed_only=True
@@ -373,9 +832,14 @@ class TraderWorker:
             trend_candles,
         )
 
-        ai_execution_candles = await self.ai_history_service.synchronize(
-            experiment.market, experiment.execution_timeframe, execution_candles
-        )
+        self.ai_history_service.client = self.client
+        async with self._history_sync_lock:
+            ai_execution_candles = await self.ai_history_service.synchronize(
+                experiment.market,
+                experiment.execution_timeframe,
+                execution_candles,
+                minimum_candles=selector_history_target,
+            )
         execution_indicators = add_indicators(
             execution_candles,
             context_lookback=self.settings.market_context_lookback,
@@ -721,91 +1185,12 @@ class TraderWorker:
                 experiment.trend_timeframe,
                 candle_end,
             )
-            selector_account.selector_selected_strategy = (
-                selector_decision.selector_selected_strategy
-                or selector_account.selector_selected_strategy
+            selector_decision = self._with_history_sync_diagnostics(
+                selector_decision,
+                experiment.market,
+                experiment.execution_timeframe,
             )
-            selector_account.selector_market_regime = selector_decision.selector_market_regime
-            selector_account.selector_confidence = selector_decision.selector_confidence
-            selector_account.selector_expected_net_return = (
-                selector_decision.selector_expected_net_return
-            )
-            selector_account.selector_candidate_scores = selector_decision.selector_candidate_scores
-            selector_account.selector_model_version = selector_decision.selector_model_version
-            selector_account.selector_active_strategy_name = (
-                selector_decision.selector_active_strategy_name
-                or selector_account.selector_active_strategy_name
-            )
-            selector_account.selector_strategy_origin = (
-                selector_decision.selector_strategy_origin
-                or selector_account.selector_strategy_origin
-            )
-            selector_account.selector_research_status = (
-                selector_decision.selector_research_status
-                or selector_account.selector_research_status
-            )
-            selector_account.selector_research_summary = (
-                selector_decision.selector_research_summary
-                or selector_account.selector_research_summary
-            )
-            selector_account.selector_validation_score = (
-                selector_decision.selector_validation_score
-                if selector_decision.selector_validation_score is not None
-                else selector_account.selector_validation_score
-            )
-            selector_account.selector_profit_factor = (
-                selector_decision.selector_profit_factor
-                if selector_decision.selector_profit_factor is not None
-                else selector_account.selector_profit_factor
-            )
-            selector_account.selector_max_drawdown_pct = (
-                selector_decision.selector_max_drawdown_pct
-                if selector_decision.selector_max_drawdown_pct is not None
-                else selector_account.selector_max_drawdown_pct
-            )
-            selector_account.selector_net_return = (
-                selector_decision.selector_net_return
-                if selector_decision.selector_net_return is not None
-                else selector_account.selector_net_return
-            )
-            selector_account.selector_trade_count = (
-                selector_decision.selector_trade_count
-                if selector_decision.selector_trade_count is not None
-                else selector_account.selector_trade_count
-            )
-            selector_account.selector_next_research_at = (
-                selector_decision.selector_next_research_at
-                or selector_account.selector_next_research_at
-            )
-            selector_account.selector_strategy_spec_json = (
-                selector_decision.selector_strategy_spec_json
-                or selector_account.selector_strategy_spec_json
-            )
-            selector_account.selector_source_urls_json = (
-                selector_decision.selector_source_urls_json
-                or selector_account.selector_source_urls_json
-            )
-            selector_account.selector_ai_provider = (
-                selector_decision.selector_ai_provider
-                or selector_account.selector_ai_provider
-            )
-            selector_account.selector_ai_model = (
-                selector_decision.selector_ai_model
-                or selector_account.selector_ai_model
-            )
-            selector_account.selector_ai_review_status = (
-                selector_decision.selector_ai_review_status
-                or selector_account.selector_ai_review_status
-            )
-            selector_account.selector_ai_review_score = (
-                selector_decision.selector_ai_review_score
-                if selector_decision.selector_ai_review_score is not None
-                else selector_account.selector_ai_review_score
-            )
-            selector_account.selector_ai_review_summary = (
-                selector_decision.selector_ai_review_summary
-                or selector_account.selector_ai_review_summary
-            )
+            self._apply_selector_decision(selector_account, selector_decision)
             decisions[ADAPTIVE_STRATEGY_SELECTOR] = selector_decision
 
         for account in accounts:

@@ -39,7 +39,7 @@ def test_web_research_is_disabled_without_api_key():
 
     assert researcher.enabled is False
     strategies, summary, sources = researcher.research(
-        "BTCUSDT", "STRONG_UPTREND", "30min", "1hour"
+        "BTCUSDT", "STRONG_UPTREND", "1hour", "4hour"
     )
     assert strategies == []
     assert sources == ()
