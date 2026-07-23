@@ -4,6 +4,8 @@ import asyncio
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 import logging
+import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -247,12 +249,157 @@ class TraderWorker:
                     return
 
                 try:
+                    await self._refresh_waiting_selector_history(
+                        session=session, experiment=experiment, now=now
+                    )
                     await self._run_live_cycle(session, experiment, now)
                 except Exception as exc:
                     logger.exception("Experiment %s live cycle failed", experiment.id)
                     experiment.last_cycle_at = now
                     experiment.error_message = f"Temporary cycle error: {type(exc).__name__}: {exc}"
                     session.commit()
+
+    async def _refresh_waiting_selector_history(
+        self,
+        *,
+        session: Session | None = None,
+        experiment: Experiment | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, object] | None:
+        """Continue adaptive history backfill even when no new candle is due."""
+        owns_session = session is None
+        active_session = session or SessionLocal()
+        try:
+            current_now = now or datetime.now(timezone.utc)
+            active_experiment = experiment
+            if active_experiment is None:
+                active_experiment = active_session.scalar(
+                    select(Experiment)
+                    .where(Experiment.status.in_(self.ACTIVE_STATUSES))
+                    .order_by(Experiment.started_at)
+                    .limit(1)
+                )
+            if active_experiment is None:
+                return None
+            selector_account = active_session.scalar(
+                select(StrategyAccount).where(
+                    StrategyAccount.experiment_id == active_experiment.id,
+                    StrategyAccount.strategy_code == ADAPTIVE_STRATEGY_SELECTOR,
+                )
+            )
+            if selector_account is None:
+                return None
+            due_at = self._as_utc(selector_account.selector_next_research_at)
+            waiting = (selector_account.selector_research_status or "").upper() in {
+                "WAITING_FOR_HISTORY", "INSUFFICIENT_HISTORY", "RETRY_REQUESTED",
+                "RESEARCH_ERROR", "BUILDING_HISTORY",
+            }
+            if not waiting or (due_at is not None and current_now < due_at):
+                return None
+            result = await self._refresh_selector_account_from_history(
+                session=active_session,
+                experiment=active_experiment,
+                selector_account=selector_account,
+                now=current_now,
+            )
+            active_session.commit()
+            return result
+        finally:
+            if owns_session:
+                active_session.close()
+
+    async def _refresh_selector_account_from_history(
+        self,
+        *,
+        session: Session,
+        experiment: Experiment,
+        selector_account: StrategyAccount,
+        now: datetime,
+    ) -> dict[str, object]:
+        latest = await self.client.get_candles(
+            experiment.market, experiment.execution_timeframe, limit=1000, closed_only=True
+        )
+        history = await self.ai_history_service.synchronize(
+            experiment.market, experiment.execution_timeframe, latest
+        )
+        diagnostics = self.ai_history_service.diagnostics(
+            experiment.market, experiment.execution_timeframe
+        )
+        stored = len(history)
+        required = self.settings.adaptive_research_min_candles
+        ready = stored >= required
+        selector_account.selector_candidate_scores = json.dumps(
+            {
+                "history": {
+                    "raw_candles": stored,
+                    "clean_candles": stored,
+                    "stored_candles": int(diagnostics.get("stored_candles") or stored),
+                    "required_clean_candles": required,
+                    "backfill_status": diagnostics.get("status"),
+                    "backfill_last_attempt_at": self._json_datetime(
+                        diagnostics.get("last_attempt_at")
+                    ),
+                },
+                "history_sync": self._json_safe_mapping(diagnostics),
+            },
+            separators=(",", ":"),
+        )
+        if ready:
+            selector_account.selector_research_status = "RETRY_REQUESTED"
+            selector_account.selector_research_summary = (
+                "Adaptive history is ready. Local quantitative research will run on the next analysis cycle."
+            )
+            selector_account.selector_next_research_at = now
+            selector_account.selector_last_error = None
+        else:
+            selector_account.selector_research_status = "WAITING_FOR_HISTORY"
+            selector_account.selector_research_summary = (
+                f"Adaptive history is still building: {stored}/{required} candles available."
+            )
+            selector_account.selector_next_research_at = now + timedelta(
+                minutes=self.settings.adaptive_research_retry_minutes
+            )
+            selector_account.selector_last_error = diagnostics.get("last_error")
+        return {
+            "experiment_id": experiment.id,
+            "selector_status": selector_account.selector_research_status,
+            "history": diagnostics,
+        }
+
+    def _with_history_sync_diagnostics(
+        self, decision: StrategyDecision, market: str, timeframe: str
+    ) -> StrategyDecision:
+        diagnostics = self.ai_history_service.diagnostics(market, timeframe)
+        try:
+            payload = json.loads(decision.selector_candidate_scores or "{}")
+        except (TypeError, json.JSONDecodeError):
+            payload = {}
+        history = payload.setdefault("history", {})
+        history["stored_candles"] = int(diagnostics.get("stored_candles") or 0)
+        history["backfill_status"] = diagnostics.get("status")
+        history["backfill_last_attempt_at"] = self._json_datetime(
+            diagnostics.get("last_attempt_at")
+        )
+        payload["history_sync"] = self._json_safe_mapping(diagnostics)
+        return replace(
+            decision,
+            selector_candidate_scores=json.dumps(payload, separators=(",", ":")),
+        )
+
+    @staticmethod
+    def _json_datetime(value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return TraderWorker._as_utc(value).isoformat()
+        return str(value)
+
+    @classmethod
+    def _json_safe_mapping(cls, values: dict[str, object]) -> dict[str, object]:
+        return {
+            key: cls._json_datetime(value) if isinstance(value, datetime) else value
+            for key, value in values.items()
+        }
 
     async def _run_live_cycle(
         self, session: Session, experiment: Experiment, now: datetime
@@ -754,6 +901,9 @@ class TraderWorker:
                 experiment.execution_timeframe,
                 experiment.trend_timeframe,
                 candle_end,
+            )
+            selector_decision = self._with_history_sync_diagnostics(
+                selector_decision, experiment.market, experiment.execution_timeframe
             )
             selector_account.selector_selected_strategy = (
                 selector_decision.selector_selected_strategy

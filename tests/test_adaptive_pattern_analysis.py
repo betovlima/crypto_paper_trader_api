@@ -12,21 +12,21 @@ from crypto_paper_trader_api.indicators import add_indicators
 from crypto_paper_trader_api.schemas import ExperimentCreate
 
 
-def test_intraday_decision_timeframe_rejects_values_below_one_hour() -> None:
-    with pytest.raises(ValueError, match="minimum intraday decision timeframe is 1 hour"):
+def test_intraday_decision_timeframe_rejects_values_below_thirty_minutes() -> None:
+    with pytest.raises(ValueError, match="minimum intraday decision timeframe is 30 minutes"):
         ExperimentCreate(
             market="SOLUSDT",
-            execution_timeframe="30min",
+            execution_timeframe="15min",
             trend_timeframe="1hour",
         )
 
     request = ExperimentCreate(
         market="SOLUSDT",
-        execution_timeframe="1hour",
-        trend_timeframe="4hour",
+        execution_timeframe="30min",
+        trend_timeframe="1hour",
     )
-    assert request.execution_timeframe == "1hour"
-    assert request.trend_timeframe == "4hour"
+    assert request.execution_timeframe == "30min"
+    assert request.trend_timeframe == "1hour"
 
 
 def test_trend_timeframe_cannot_be_shorter_than_decision_timeframe() -> None:

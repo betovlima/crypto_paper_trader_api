@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
+from sqlalchemy import select
 
 from .ai_candle_repository import AICandleRepository
 from .ai_database import AISessionLocal, init_ai_database
@@ -89,6 +91,53 @@ class AIHistoryService:
             self.repository.save_state(session, market, timeframe, target, status, missing=missing)
             session.commit()
         return frame
+
+
+    def diagnostics(self, market: str, timeframe: str) -> dict[str, object]:
+        """Return persisted history synchronization diagnostics for the dashboard."""
+        with AISessionLocal() as session:
+            from .ai_models import AIHistorySyncState
+
+            state = session.scalar(
+                select(AIHistorySyncState).where(
+                    AIHistorySyncState.market == market,
+                    AIHistorySyncState.timeframe == timeframe,
+                )
+            )
+            if state is None:
+                return {
+                    "status": "PENDING",
+                    "stored_candles": 0,
+                    "target_candles": self.settings.ai_history_target_candles,
+                    "pages_attempted": 0,
+                    "pages_succeeded": 0,
+                    "candles_added_last_attempt": 0,
+                    "empty_windows_last_attempt": 0,
+                    "last_error": None,
+                    "last_attempt_at": None,
+                    "next_retry_at": None,
+                }
+            updated_at = self._as_utc_timestamp(state.updated_at).to_pydatetime()
+            retry_at = (
+                updated_at + timedelta(minutes=self.settings.adaptive_research_retry_minutes)
+                if state.status != "READY"
+                else None
+            )
+            return {
+                "status": state.status,
+                "stored_candles": int(state.stored_candles or 0),
+                "target_candles": int(state.target_candles or self.settings.ai_history_target_candles),
+                "pages_attempted": 0,
+                "pages_succeeded": 0,
+                "candles_added_last_attempt": 0,
+                "empty_windows_last_attempt": 0,
+                "missing_intervals": int(state.missing_intervals or 0),
+                "first_candle_at": state.first_candle_at,
+                "last_candle_at": state.last_candle_at,
+                "last_error": state.last_error,
+                "last_attempt_at": updated_at,
+                "next_retry_at": retry_at,
+            }
 
     @staticmethod
     def _as_utc_timestamp(value: object) -> pd.Timestamp:

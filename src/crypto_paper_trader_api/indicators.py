@@ -166,6 +166,47 @@ def add_indicators(
         + 0.10 * extreme_volume_component
     ).clip(0, 1)
 
+    # Range-bound evidence used by the adaptive pattern strategy. All rolling
+    # calculations use only current and previous closed candles.
+    range_window = 24
+    data["range_support_24"] = low.rolling(range_window, min_periods=range_window).min()
+    data["range_resistance_24"] = high.rolling(range_window, min_periods=range_window).max()
+    range_width_24 = (data["range_resistance_24"] - data["range_support_24"]).replace(0, np.nan)
+    data["range_position_24"] = (close - data["range_support_24"]) / range_width_24
+
+    bollinger_mean = close.rolling(20, min_periods=20).mean()
+    bollinger_std = close.rolling(20, min_periods=20).std().replace(0, np.nan)
+    data["bollinger_zscore_20"] = (close - bollinger_mean) / bollinger_std
+    data["bollinger_width_20"] = (4.0 * bollinger_std) / safe_close
+
+    lowest_14 = low.rolling(14, min_periods=14).min()
+    highest_14 = high.rolling(14, min_periods=14).max()
+    stochastic_range = (highest_14 - lowest_14).replace(0, np.nan)
+    data["stochastic_k_14"] = 100.0 * (close - lowest_14) / stochastic_range
+    data["stochastic_d_3"] = data["stochastic_k_14"].rolling(3, min_periods=3).mean()
+
+    ema50_delta = data["ema_50"].diff(10)
+    data["ema50_slope_10"] = ema50_delta / safe_close
+    centered = close - bollinger_mean
+    crossing = (centered * centered.shift(1) < 0).astype(float)
+    data["mean_crossings_20"] = crossing.rolling(20, min_periods=20).sum()
+    net_change_20 = close.diff(20).abs()
+    path_length_20 = close.diff().abs().rolling(20, min_periods=20).sum().replace(0, np.nan)
+    data["range_efficiency_20"] = net_change_20 / path_length_20
+
+    adx_component = (1.0 - (data["adx_14"] / 35.0)).clip(0, 1)
+    slope_component = (1.0 - (data["ema50_slope_10"].abs() / 0.02)).clip(0, 1)
+    efficiency_component = (1.0 - (data["range_efficiency_20"] / 0.45)).clip(0, 1)
+    crossings_component = (data["mean_crossings_20"] / 6.0).clip(0, 1)
+    bandwidth_component = (1.0 - (data["bollinger_width_20"] / 0.08)).clip(0, 1)
+    data["range_bound_score"] = 100.0 * (
+        0.30 * adx_component
+        + 0.20 * slope_component
+        + 0.25 * efficiency_component
+        + 0.15 * crossings_component
+        + 0.10 * bandwidth_component
+    )
+
     numeric_columns = list(
         dict.fromkeys(
             [
@@ -196,6 +237,17 @@ def add_indicators(
                 "volatility_20",
                 "upper_wick_ratio",
                 "lower_wick_ratio",
+                "range_support_24",
+                "range_resistance_24",
+                "range_position_24",
+                "bollinger_zscore_20",
+                "bollinger_width_20",
+                "stochastic_k_14",
+                "stochastic_d_3",
+                "ema50_slope_10",
+                "mean_crossings_20",
+                "range_efficiency_20",
+                "range_bound_score",
                 *FEATURE_COLUMNS,
             ]
         )

@@ -1,4 +1,13 @@
-# Crypto Paper Trader API — v0.16.9
+# Crypto Paper Trader API — v0.16.10
+
+## v0.16.10 — adaptive strategy recovery
+
+- Restores adaptive-history synchronization even when no new candle is due.
+- Adds persisted history diagnostics to the adaptive strategy payload.
+- Restores selector state from the latest decision snapshot when account fields are empty.
+- Adds range-bound indicators required by local pattern research.
+- Keeps adaptive research fully local, without OpenAI calls.
+- Accepts 30-minute decision candles and requires the trend timeframe to be equal or greater.
 
 ## v0.16.9 — server-calculated sticky header summary
 

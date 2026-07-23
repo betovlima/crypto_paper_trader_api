@@ -55,6 +55,24 @@ def strategy_summary(
     gross_equity = account.initial_capital + gross_pnl
 
     payload = account.to_public_dict(market_price)
+    if account.selector_candidate_scores is None:
+        latest_selector_snapshot = session.scalar(
+            select(StrategyDecisionSnapshot)
+            .where(
+                StrategyDecisionSnapshot.strategy_account_id == account.id,
+                StrategyDecisionSnapshot.selector_candidate_scores.is_not(None),
+            )
+            .order_by(StrategyDecisionSnapshot.candle_timestamp.desc())
+            .limit(1)
+        )
+        if latest_selector_snapshot is not None:
+            payload["selector_candidate_scores"] = (
+                latest_selector_snapshot.selector_candidate_scores
+            )
+            payload["selector_research_status"] = (
+                account.selector_research_status
+                or latest_selector_snapshot.selector_research_status
+            )
     latest_snapshot = session.scalar(
         select(StrategyMarketSnapshot)
         .where(StrategyMarketSnapshot.strategy_account_id == account.id)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .strategy_codes import ACTIVE_STRATEGY_CODES
 from .trading_profiles import DEFAULT_TRADING_PROFILE, TRADING_PROFILES
@@ -51,6 +51,26 @@ class ExperimentCreate(BaseModel):
         if value not in SUPPORTED_TIMEFRAMES:
             raise ValueError(f"Unsupported timeframe: {value}")
         return value
+
+    @model_validator(mode="after")
+    def validate_timeframe_relationship(self) -> "ExperimentCreate":
+        timeframe_seconds = {
+            "1min": 60,
+            "5min": 300,
+            "15min": 900,
+            "30min": 1800,
+            "1hour": 3600,
+            "4hour": 14400,
+            "1day": 86400,
+            "1week": 604800,
+        }
+        if timeframe_seconds[self.execution_timeframe] < 1800:
+            raise ValueError("The minimum intraday decision timeframe is 30 minutes.")
+        if timeframe_seconds[self.trend_timeframe] < timeframe_seconds[self.execution_timeframe]:
+            raise ValueError(
+                "The trend timeframe must be equal to or greater than the decision timeframe."
+            )
+        return self
 
 
 class ExperimentResponse(BaseModel):
