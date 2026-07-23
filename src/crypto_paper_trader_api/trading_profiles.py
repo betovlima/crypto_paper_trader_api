@@ -50,14 +50,14 @@ TRADING_PROFILES: dict[str, TradingProfile] = {
     CONSERVATIVE_SWING: TradingProfile(
         code=CONSERVATIVE_SWING,
         display_name="Conservative Swing",
-        style="Slower swing trend following",
+        style="Slower intraday trend following",
         description=(
-            "Uses 4-hour decisions and a 1-day trend filter. EMA 20/50/200, stronger "
+            "Uses 1-hour decisions and a 4-hour trend filter. EMA 20/50/200, stronger "
             "technical confirmations, wider volatility-aware stops and a longer holding window "
             "reduce noise and trading frequency."
         ),
-        decision_timeframe="4hour",
-        trend_timeframe="1day",
+        decision_timeframe="1hour",
+        trend_timeframe="4hour",
         default_duration_hours=168.0,
         fast_ema_period=20,
         slow_ema_period=50,
@@ -87,14 +87,14 @@ TRADING_PROFILES: dict[str, TradingProfile] = {
     BALANCED_INTRADAY: TradingProfile(
         code=BALANCED_INTRADAY,
         display_name="Balanced Intraday",
-        style="One-hour intraday decisions",
+        style="Thirty-minute intraday decisions",
         description=(
-            "Uses 1-hour decisions and a 4-hour trend filter. EMA 9/21/50 reacts faster than "
+            "Uses 30-minute decisions and a 1-hour trend filter. EMA 9/21/50 reacts faster than "
             "the conservative profile while RSI, ADX, volume and technical risk controls confirm "
             "signals. Exchange costs are reported after execution and do not veto entries."
         ),
-        decision_timeframe="1hour",
-        trend_timeframe="4hour",
+        decision_timeframe="30min",
+        trend_timeframe="1hour",
         default_duration_hours=24.0,
         fast_ema_period=9,
         slow_ema_period=21,
@@ -124,14 +124,14 @@ TRADING_PROFILES: dict[str, TradingProfile] = {
     FAST_INTRADAY: TradingProfile(
         code=FAST_INTRADAY,
         display_name="Fast Intraday",
-        style="Reactive one-hour movements",
+        style="Rapid short-term movements",
         description=(
-            "Uses 1-hour decisions and a 4-hour trend filter. EMA 5/13/34 reacts quickly, "
+            "Uses 15-minute decisions and a 1-hour trend filter. EMA 5/13/34 reacts quickly, "
             "while stricter ADX, volume and probability rules help control short-term noise. "
             "Fees remain an accounting result only."
         ),
-        decision_timeframe="1hour",
-        trend_timeframe="4hour",
+        decision_timeframe="15min",
+        trend_timeframe="1hour",
         default_duration_hours=24.0,
         fast_ema_period=5,
         slow_ema_period=13,

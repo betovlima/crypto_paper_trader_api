@@ -1,68 +1,4 @@
-# Crypto Paper Trader API — v0.16.17
-
-
-## v0.16.17 — sideways-market adaptive evaluation
-
-- Adds a 0–100 range-bound score based on ADX, moving-average distance and slope, mean crossings, directional efficiency and Bollinger bandwidth.
-- Adds Bollinger midpoint/bands/z-score, stochastic %K/%D, 24-candle support/resistance and normalized range position for the selected asset.
-- Prioritizes a confirmed sideways regime before a weak trend classification while preserving strong-trend and high-volatility regimes.
-- Adds four locally executable strategy families: Bollinger mean reversion, support-candle reversal, false-support-breakout reversal and stochastic range rotation.
-- Requires every range strategy to pass a minimum range score and maximum ADX filter before entering.
-- Exits range strategies at the Bollinger mean, range midpoint, stochastic target, bearish rejection near resistance or when the range regime is lost.
-- Exposes the range state, score, support, resistance, range position, Bollinger z-score/bandwidth and stochastic values in adaptive diagnostics.
-
-## v0.16.16 — selected-asset time-series pattern strategy
-
-- Converts the adaptive selector into a selected-asset pattern-research engine while retaining the stable `ADAPTIVE_STRATEGY_SELECTOR` database code.
-- Analyzes only the market chosen for the experiment; it never scans, ranks or changes markets.
-- Enforces a one-hour minimum intraday decision candle and requires the trend timeframe to be equal to or greater than the decision timeframe.
-- Uses a 10,000-candle history target and a configurable ceiling of 30,000 candles, with 800 clean candles as the first-analysis minimum.
-- Compares the latest 24-candle movement with historical windows and estimates the next configured candle from the nearest patterns.
-- Adds moving-average, momentum, volatility, volume and deterministic candlestick-pattern context including doji, hammer, shooting star, engulfing, inside/outside bar, morning star and evening star.
-- Adds AI-generated and local hypotheses for EMA/candle pullbacks, support reversals, momentum, breakouts and mean reversion.
-- Keeps local cost-aware backtests, chronological walk-forward validation and risk gates authoritative.
-- Removes OpenAI web search from this strategy: OpenAI receives only a compact statistical summary of the selected asset.
-- Keeps the independent AI Opportunity Scanner unchanged and isolated from experiment strategy research.
-
-## v0.16.15 — current OpenAI retry and stale-error cleanup
-
-- Adds `POST /api/v1/experiments/{experiment_id}/adaptive-selector/retry-research`, protected by `X-Admin-Key`.
-- Reloads the effective OpenAI secret from the project `.env` or Railway variables without deleting or replacing SQLite data.
-- Forces a complete adaptive research cycle without waiting for the next scheduled review or closed candle.
-- Keeps the history-only retry endpoint for the distinct `WAITING_FOR_HISTORY` state.
-- Replaces oversized authentication details with a concise, redacted diagnostic.
-- Changes the selector model version so an existing deployment performs a fresh review after upgrade.
-
-## v0.16.14 — independent adaptive-history recovery
-
-- Runs the adaptive selector history backfill in its own background task instead of waiting for a new closed candle.
-- Retries overdue history automatically and reruns selector research immediately after the clean-history requirement is reached.
-- Adds bounded MEXC candle requests with an `endTime` fallback and expanding sparse-market lookback windows.
-- Persists backfill pages, candles added, empty windows, last attempt, next retry and sanitized errors in SQLite.
-- Adds `POST /api/v1/experiments/{experiment_id}/adaptive-selector/retry-history`, protected by `X-Admin-Key`.
-- Keeps existing `.env` and `data` files compatible through additive database migration.
-
-
-## v0.16.11 — history-safe adaptive validation
-
-- Loads a raw execution history with a 300-candle indicator warm-up margin above the minimum clean-candle requirement.
-- Continues MEXC pagination when the currently forming candle is removed from an otherwise full batch.
-- Checks usable history before strategy generation or OpenAI research and retries after five minutes when the buffer is incomplete.
-- Returns unavailable validation metrics as unavailable instead of representing missing data as a 100% drawdown.
-- Stops inventing a bullish fallback candidate during confirmed bearish regimes in the long-only Spot simulator.
-- Records an explicit wait-for-recovery state instead of presenting a rejected strategy comparison.
-- Preserves a concise, redacted OpenAI error for dashboard diagnosis while local validation remains authoritative.
-
-## v0.16.10 — adaptive selector champion/challenger research
-
-- Expands TRANSITION research from five hypotheses to fifteen controlled candidates.
-- Separates mandatory validation failures from soft quality warnings.
-- Requires positive expectancy, positive net return, bounded drawdown, a statistically usable trade sample and at least two positive folds out of three.
-- Keeps profit factor, ideal sample size, stability and target validation score as ranking penalties instead of automatic rejection gates.
-- Persists the best rejected candidate, exact failure reasons and aggregate rejection counts in the existing selector diagnostics JSON.
-- Preserves a validated champion when challengers fail and suspends it rather than deleting it when the current regime is incompatible.
-- Replaces a champion only when a challenger exceeds it by the configured improvement margin.
-- Reassesses TRANSITION more frequently while remaining paper-only and cost-aware.
+# Crypto Paper Trader API — v0.16.9
 
 ## v0.16.9 — server-calculated sticky header summary
 
@@ -115,68 +51,60 @@ This release contains only the strategy improvements discussed from the Larry Wi
 - Keeps the existing environment-based configuration behavior unchanged for now.
 
 
-## Adaptive Time-Series Pattern Strategy
+## Adaptive Strategy Research Selector
 
-`ADAPTIVE_STRATEGY_SELECTOR` is retained as the internal persisted code for SQLite compatibility. Its public behavior is now a pattern-research strategy for the **single asset selected by the user**.
+The `ADAPTIVE_STRATEGY_SELECTOR` no longer chooses one of the fixed dashboard strategies. It now follows this process:
 
 ```text
-Selected experiment asset
-    -> long selected-asset history
-    -> current closed-candle pattern and regime
-    -> nearest historical movement windows
-    -> local and optional AI strategy hypotheses
-    -> executable rules
-    -> cost-adjusted chronological backtest
-    -> walk-forward and risk gates
-    -> BUY, HOLD or SELL for the next configured candle
+Market regime detection
+    -> strategy hypothesis research
+    -> executable rule generation
+    -> cost-adjusted backtest
+    -> chronological walk-forward validation
+    -> risk and stability gates
+    -> generated strategy activation or WAIT
 ```
 
-The strategy never scans, ranks or changes markets. Market discovery remains the responsibility of the independent AI Opportunity Scanner. Every fixed strategy and the adaptive strategy operate on the same experiment asset and the same configured decision/trend timeframes.
+The current generated strategy is persisted with:
 
-For intraday experiments, the minimum decision timeframe is `1hour`. The trend timeframe must be equal to or greater than the decision timeframe. The standard profiles use `1hour`/`4hour` or `4hour`/`1day`.
+- detected regime;
+- strategy name, code, origin and executable JSON specification;
+- research summary and source URLs;
+- validation score;
+- net validated return;
+- maximum drawdown;
+- profit factor;
+- validated trade count;
+- next reassessment timestamp.
 
-The pattern engine combines:
+An open paper position remains attached to the generated strategy that opened it. The selector researches a replacement only after the portfolio is flat.
 
-- EMA alignment, slope, distance and pullback context;
-- RSI, ADX, rate of change and momentum continuation;
-- ATR, volatility compression/expansion and breakout context;
-- relative volume and volume-confirmed movement;
-- support/resistance, Donchian and mean-reversion contexts;
-- doji, hammer, shooting star, bullish/bearish engulfing, inside/outside bars, morning star and evening star.
+### Optional web research
 
-Candlestick patterns are context features, not standalone trade signals. A generated rule is activated only after local costs, sample size, expectancy, net return, drawdown, walk-forward stability and risk gates approve it.
 
-The history controls are intentionally separate:
+Configure only in the API service:
 
 ```env
-SELECTOR_MODEL_VERSION=ADAPTIVE-PATTERN-RESEARCH-v8-RANGE-BOUND
+ADAPTIVE_RESEARCH_WEB_ENABLED=true
+```
+
+
+Main research settings:
+
+```env
+SELECTOR_MODEL_VERSION=ADAPTIVE-RESEARCH-SELECTOR-v1
+ADAPTIVE_RESEARCH_INTERVAL_HOURS=12
+ADAPTIVE_RESEARCH_RETRY_MINUTES=30
 ADAPTIVE_RESEARCH_MIN_CANDLES=800
-ADAPTIVE_RESEARCH_TARGET_CANDLES=10000
-ADAPTIVE_RESEARCH_MAX_HISTORY_CANDLES=30000
-ADAPTIVE_PATTERN_WINDOW_CANDLES=24
-ADAPTIVE_PATTERN_HORIZON_CANDLES=1
-ADAPTIVE_PATTERN_NEIGHBORS=64
 ADAPTIVE_RESEARCH_VALIDATION_ROWS=240
 ADAPTIVE_RESEARCH_WALK_FORWARD_FOLDS=3
-ADAPTIVE_RESEARCH_MAX_CANDIDATES=15
+ADAPTIVE_RESEARCH_MAX_CANDIDATES=8
 ADAPTIVE_RESEARCH_MIN_TRADES=20
 ADAPTIVE_RESEARCH_MIN_PROFIT_FACTOR=1.20
 ADAPTIVE_RESEARCH_MAX_DRAWDOWN_PCT=0.10
 ADAPTIVE_RESEARCH_MIN_STABILITY=0.67
 ADAPTIVE_RESEARCH_MIN_VALIDATION_SCORE=60
 ```
-
-The optional OpenAI stage receives a compact statistical summary only. It does not receive or select other markets and it does not replace local validation.
-
-```env
-ADAPTIVE_RESEARCH_WEB_ENABLED=true
-OPENAI_API_KEY=replace-with-your-server-side-key
-ADAPTIVE_RESEARCH_OPENAI_MODEL=gpt-5
-ADAPTIVE_RESEARCH_OPENAI_TIMEOUT_SECONDS=90
-ADAPTIVE_RESEARCH_OPENAI_ATTEMPTS=2
-```
-
-Without `OPENAI_API_KEY`, local selected-asset pattern matching and the internal hypothesis library continue operating.
 
 Supported generated strategy families:
 
@@ -185,8 +113,6 @@ Supported generated strategy families:
 - `VOLATILITY_BREAKOUT`
 - `MEAN_REVERSION`
 - `MOMENTUM_CONTINUATION`
-- `EMA_CANDLE_PULLBACK`
-- `CANDLE_REVERSAL`
 
 ## Independent AI Opportunity Scanner
 
@@ -225,29 +151,11 @@ The endpoint targets the latest `RUNNING` experiment, preserves all records and 
 
 ## Local execution
 
-Copy `.env.example` to `.env` in the API project root. The backend now resolves this
-file from the location of `config.py`, so the OpenAI key is loaded correctly even when
-Uvicorn is started from another working directory. During local development the project
-`.env` takes precedence over an old `OPENAI_API_KEY` stored in the operating-system
-environment. On Railway, service variables keep precedence.
-
 ```powershell
-Copy-Item .env.example .env
 poetry config virtualenvs.in-project true
 poetry install
 poetry run uvicorn crypto_paper_trader_api.app:app --app-dir src --host 0.0.0.0 --port 8000 --reload
 ```
-
-Safe configuration diagnostic:
-
-```powershell
-poetry run python scripts/check_openai_configuration.py
-poetry run python scripts/check_openai_configuration.py --check-api
-```
-
-The diagnostic never prints the secret. It reports whether the effective key came from
-the project `.env`, a process variable or a Railway variable. The optional API check also
-shows the redacted OpenAI error code, including `invalid_api_key` and `ip_not_authorized`.
 
 API documentation:
 
@@ -277,28 +185,14 @@ For real web-assisted research, also set:
 
 ```env
 ADAPTIVE_RESEARCH_WEB_ENABLED=true
-OPENAI_API_KEY=replace-with-your-server-side-key
-ADAPTIVE_RESEARCH_OPENAI_MODEL=gpt-5
 ```
 
-Never put `ADMIN_API_KEY` or `OPENAI_API_KEY` in the frontend or in any `VITE_*` variable.
 
 ## Safety boundary
 
 All executions are simulated. Public MEXC data is used for analysis, and the adaptive researcher cannot submit exchange orders.
 
 
-
-
-## v0.16.12 — deterministic local `.env` loading and OpenAI authentication diagnostics
-
-- Resolves the local `.env` from the API project root instead of the current shell directory.
-- Gives the project `.env` precedence over stale operating-system variables during local development.
-- Preserves Railway variable precedence in production.
-- Normalizes accidental quotes, whitespace and a copied `Bearer ` prefix in secret values.
-- Replaces the generic HTTP 401 text with a redacted OpenAI error code and key source.
-- Distinguishes an invalid key from an OpenAI IP allowlist rejection.
-- Adds a safe local diagnostic script that can validate authentication without generating a response.
 
 ## v0.16.4 — closed-candle entry confirmation and candle attribution
 
@@ -309,13 +203,10 @@ All executions are simulated. Public MEXC data is used for analysis, and the ada
 - Applies equivalent safeguards to generated adaptive strategy families.
 - Persists the candle timestamp that produced every simulated entry.
 
-## 0.15.1 - Hybrid OpenAI research and local quantitative validation
 
 - Uses strict Structured Outputs for web-researched strategy specifications.
-- Adds an optional OpenAI suitability review only after local candidates pass all deterministic gates.
 - Keeps local backtests, walk-forward validation, transaction costs, drawdown and trade-count rules authoritative.
 - Exposes the AI provider, model, review status, review score and review explanation to the frontend.
-- Sends `store=false` in OpenAI Responses API requests.
 
 
 

@@ -18,19 +18,19 @@ def test_profiles_expose_distinct_timeframes_and_ema_structures() -> None:
     balanced = get_trading_profile(BALANCED_INTRADAY)
     fast = get_trading_profile(FAST_INTRADAY)
 
-    assert (swing.decision_timeframe, swing.trend_timeframe) == ("4hour", "1day")
+    assert (swing.decision_timeframe, swing.trend_timeframe) == ("1hour", "4hour")
     assert (swing.fast_ema_period, swing.slow_ema_period, swing.regime_ema_period) == (
         20,
         50,
         200,
     )
-    assert (balanced.decision_timeframe, balanced.trend_timeframe) == ("1hour", "4hour")
+    assert (balanced.decision_timeframe, balanced.trend_timeframe) == ("30min", "1hour")
     assert (balanced.fast_ema_period, balanced.slow_ema_period, balanced.regime_ema_period) == (
         9,
         21,
         50,
     )
-    assert (fast.decision_timeframe, fast.trend_timeframe) == ("1hour", "4hour")
+    assert (fast.decision_timeframe, fast.trend_timeframe) == ("15min", "1hour")
     assert (fast.fast_ema_period, fast.slow_ema_period, fast.regime_ema_period) == (
         5,
         13,
@@ -53,8 +53,8 @@ def test_experiment_keeps_selected_profile_and_resolved_timeframes() -> None:
     )
 
     assert experiment.trading_profile == BALANCED_INTRADAY
-    assert experiment.execution_timeframe == "1hour"
-    assert experiment.trend_timeframe == "4hour"
+    assert experiment.execution_timeframe == "30min"
+    assert experiment.trend_timeframe == "1hour"
 
 
 def test_unknown_profile_is_rejected() -> None:

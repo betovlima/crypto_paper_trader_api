@@ -39,7 +39,7 @@ ACTIVE_STRATEGY_CODES = (
 )
 
 STRATEGY_DISPLAY_NAMES = {
-    ADAPTIVE_STRATEGY_SELECTOR: "Adaptive Time-Series Pattern Strategy",
+    ADAPTIVE_STRATEGY_SELECTOR: "Adaptive Strategy Selector",
     CURRENT_HYBRID: "Trend, Momentum, Volume and AI Confirmation",
     EMA_CROSSOVER: "Fast and Slow Exponential Average Crossover",
     EMA_PULLBACK: "Pullback to Exponential Moving Averages",
@@ -55,12 +55,9 @@ STRATEGY_DISPLAY_NAMES = {
 
 STRATEGY_DESCRIPTIONS = {
     ADAPTIVE_STRATEGY_SELECTOR: (
-        "Analyzes only the long time series of the asset selected for the current experiment. "
-        "It compares the latest closed-candle movement with similar historical windows, detects "
-        "moving-average, momentum, volatility, volume, support/resistance and candlestick-pattern "
-        "contexts, generates executable strategy hypotheses and applies a hypothesis to the next "
-        "configured candle only after cost-aware chronological backtests, walk-forward validation "
-        "and risk gates approve it. It never scans or changes markets."
+        "Detects the current market regime, researches new executable strategy hypotheses, "
+        "backtests them with trading costs, validates them with chronological walk-forward "
+        "windows and activates only a generated strategy that passes risk and stability gates."
     ),
     CURRENT_HYBRID: (
         "Combines the selected profile's EMAs, RSI, ADX, relative volume and XGBoost "

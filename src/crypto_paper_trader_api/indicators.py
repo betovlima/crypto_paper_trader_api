@@ -28,15 +28,6 @@ FEATURE_COLUMNS = [
     "extension_ema20_atr",
     "ignition_score",
     "exhaustion_score",
-    "bollinger_width_20",
-    "bollinger_zscore_20",
-    "stochastic_k_14",
-    "stochastic_d_3",
-    "ema50_slope_10",
-    "mean_crossings_20",
-    "range_efficiency_20",
-    "range_position_24",
-    "range_bound_score",
 ]
 
 
@@ -102,63 +93,8 @@ def add_indicators(
     data["return_3"] = close.pct_change(3)
     data["return_6"] = close.pct_change(6)
     data["volatility_20"] = data["return_1"].rolling(20, min_periods=20).std()
+
     safe_close = close.replace(0, np.nan)
-    data["ema_gap_20_50"] = (data["ema_20"] - data["ema_50"]) / safe_close
-
-    # Range-bound and mean-reversion context. These indicators are calculated
-    # locally from the selected asset only and are shared by the adaptive
-    # strategy research, the historical-pattern matcher and live decisions.
-    data["bollinger_mid_20"] = close.rolling(20, min_periods=20).mean()
-    bollinger_std_20 = close.rolling(20, min_periods=20).std(ddof=0)
-    data["bollinger_upper_20"] = data["bollinger_mid_20"] + 2.0 * bollinger_std_20
-    data["bollinger_lower_20"] = data["bollinger_mid_20"] - 2.0 * bollinger_std_20
-    data["bollinger_width_20"] = (
-        data["bollinger_upper_20"] - data["bollinger_lower_20"]
-    ) / data["bollinger_mid_20"].replace(0, np.nan)
-    data["bollinger_zscore_20"] = (
-        close - data["bollinger_mid_20"]
-    ) / bollinger_std_20.replace(0, np.nan)
-
-    stochastic_low_14 = low.rolling(14, min_periods=14).min()
-    stochastic_high_14 = high.rolling(14, min_periods=14).max()
-    stochastic_range_14 = (stochastic_high_14 - stochastic_low_14).replace(0, np.nan)
-    data["stochastic_k_14"] = 100.0 * (close - stochastic_low_14) / stochastic_range_14
-    data["stochastic_d_3"] = data["stochastic_k_14"].rolling(3, min_periods=3).mean()
-
-    data["ema50_slope_10"] = (
-        data["ema_50"] - data["ema_50"].shift(10)
-    ) / safe_close
-    above_ema20 = close >= data["ema_20"]
-    data["mean_crossings_20"] = (
-        above_ema20.ne(above_ema20.shift(1)).astype(float).rolling(20, min_periods=20).sum()
-    )
-    path_length_20 = close.diff().abs().rolling(20, min_periods=20).sum()
-    data["range_efficiency_20"] = (
-        (close - close.shift(20)).abs() / path_length_20.replace(0, np.nan)
-    )
-
-    data["range_support_24"] = low.rolling(24, min_periods=24).min().shift(1)
-    data["range_resistance_24"] = high.rolling(24, min_periods=24).max().shift(1)
-    range_width_24 = (data["range_resistance_24"] - data["range_support_24"]).replace(
-        0, np.nan
-    )
-    data["range_position_24"] = (close - data["range_support_24"]) / range_width_24
-
-    adx_component = ((22.0 - data["adx_14"]) / 12.0).clip(0, 1)
-    ema_gap_component = (1.0 - (data["ema_gap_20_50"].abs() / 0.012)).clip(0, 1)
-    ema_slope_component = (1.0 - (data["ema50_slope_10"].abs() / 0.012)).clip(0, 1)
-    efficiency_component = (1.0 - (data["range_efficiency_20"] / 0.55)).clip(0, 1)
-    crossing_component = ((data["mean_crossings_20"] - 2.0) / 6.0).clip(0, 1)
-    bandwidth_component = (1.0 - (data["bollinger_width_20"] / 0.12)).clip(0, 1)
-    data["range_bound_score"] = 100.0 * (
-        0.25 * adx_component
-        + 0.20 * ema_gap_component
-        + 0.15 * ema_slope_component
-        + 0.15 * efficiency_component
-        + 0.10 * crossing_component
-        + 0.15 * bandwidth_component
-    )
-
     candle_top = pd.concat([open_, close], axis=1).max(axis=1)
     candle_bottom = pd.concat([open_, close], axis=1).min(axis=1)
     data["candle_body_pct"] = (close - open_) / safe_close
@@ -258,20 +194,6 @@ def add_indicators(
                 "average_volume_20",
                 "relative_volume",
                 "volatility_20",
-                "bollinger_mid_20",
-                "bollinger_upper_20",
-                "bollinger_lower_20",
-                "bollinger_width_20",
-                "bollinger_zscore_20",
-                "stochastic_k_14",
-                "stochastic_d_3",
-                "ema50_slope_10",
-                "mean_crossings_20",
-                "range_efficiency_20",
-                "range_support_24",
-                "range_resistance_24",
-                "range_position_24",
-                "range_bound_score",
                 "upper_wick_ratio",
                 "lower_wick_ratio",
                 *FEATURE_COLUMNS,

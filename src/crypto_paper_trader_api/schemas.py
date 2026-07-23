@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from .strategy_codes import ACTIVE_STRATEGY_CODES
 from .trading_profiles import DEFAULT_TRADING_PROFILE, TRADING_PROFILES
@@ -25,8 +25,8 @@ class ExperimentCreate(BaseModel):
     duration_hours: float = Field(default=24.0, gt=0, le=168)
     initial_capital: float = Field(default=1000.0, gt=0)
     trading_profile: str = DEFAULT_TRADING_PROFILE
-    execution_timeframe: str = "1hour"
-    trend_timeframe: str = "4hour"
+    execution_timeframe: str = "30min"
+    trend_timeframe: str = "1hour"
 
     @field_validator("market")
     @classmethod
@@ -51,24 +51,6 @@ class ExperimentCreate(BaseModel):
         if value not in SUPPORTED_TIMEFRAMES:
             raise ValueError(f"Unsupported timeframe: {value}")
         return value
-
-    @model_validator(mode="after")
-    def validate_intraday_timeframes(self):
-        seconds = {
-            "1min": 60,
-            "5min": 300,
-            "15min": 900,
-            "30min": 1800,
-            "1hour": 3600,
-            "4hour": 14400,
-            "1day": 86400,
-            "1week": 604800,
-        }
-        if seconds[self.execution_timeframe] < 3600:
-            raise ValueError("The minimum intraday decision timeframe is 1 hour.")
-        if seconds[self.trend_timeframe] < seconds[self.execution_timeframe]:
-            raise ValueError("The trend timeframe must be equal to or greater than the decision timeframe.")
-        return self
 
 
 class ExperimentResponse(BaseModel):
@@ -364,23 +346,16 @@ class PublicConfiguration(BaseModel):
     selector_min_expected_net_return: float
     selector_min_reward_risk_ratio: float
     selector_model_version: str
-    adaptive_research_web_enabled: bool
-    adaptive_research_openai_model: str
-    adaptive_research_ai_review_enabled: bool
-    adaptive_research_openai_review_model: str
     adaptive_research_interval_hours: float
     adaptive_research_retry_minutes: int
-    adaptive_research_transition_retry_minutes: int
     adaptive_research_min_candles: int
     adaptive_research_validation_rows: int
     adaptive_research_walk_forward_folds: int
     adaptive_research_min_trades: int
-    adaptive_research_hard_min_trades: int
     adaptive_research_min_profit_factor: float
     adaptive_research_max_drawdown_pct: float
     adaptive_research_min_stability: float
     adaptive_research_min_validation_score: float
-    adaptive_research_champion_min_improvement: float
 
 
 class PaginationMetadata(BaseModel):
@@ -417,15 +392,13 @@ class StrategyTradeHistoryResponse(BaseModel):
 
 class AdaptiveHistoryRetryResponse(BaseModel):
     experiment_id: str
-    market: str
-    timeframe: str
-    selector_status: str | None = None
-    selector_summary: str | None = None
-    next_research_at: datetime | None = None
-    history: dict[str, Any]
+    status: str
+    message: str
 
 
-class AdaptiveResearchRetryResponse(AdaptiveHistoryRetryResponse):
-    openai_configuration_reloaded: bool = True
-    openai_configured: bool
-    openai_key_source: str
+class AdaptiveResearchRetryResponse(BaseModel):
+    experiment_id: str
+    status: str
+    message: str
+    research_provider: str = "LOCAL"
+

@@ -41,13 +41,6 @@ async def lifespan(_app: FastAPI):
         settings.resolved_ai_database_url,
         settings.persistent_storage_configured,
     )
-    logging.getLogger(__name__).info(
-        "OpenAI configuration: configured=%s source=%s project_env_file=%s env_file_exists=%s",
-        bool(settings.openai_api_key),
-        settings.openai_api_key_source,
-        settings.project_env_file,
-        settings.project_env_file.is_file(),
-    )
     worker.start()
     worker.wake()
     ai_scanner.start()
@@ -59,7 +52,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.16.17",
+    version="0.16.9",
     description=(
         "PAPER_ONLY crypto strategy research using public MEXC Spot data. "
         "All persistent state is stored in SQLite. HTTP routers and application services "

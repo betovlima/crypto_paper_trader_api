@@ -5,77 +5,18 @@ import os
 from pathlib import Path
 
 from pydantic import Field, field_validator
-from pydantic_settings import (
-    BaseSettings,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-)
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PROJECT_ENV_FILE = PROJECT_ROOT / ".env"
-
-
-def _env_file_defines(name: str) -> bool:
-    """Return whether the project-local .env explicitly defines a setting."""
-
-    if not PROJECT_ENV_FILE.is_file():
-        return False
-    try:
-        for raw_line in PROJECT_ENV_FILE.read_text(encoding="utf-8-sig").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.lower().startswith("export "):
-                line = line[7:].lstrip()
-            key, separator, _value = line.partition("=")
-            if separator and key.strip().upper() == name.upper():
-                return True
-    except OSError:
-        return False
-    return False
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Application configuration loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=str(PROJECT_ENV_FILE),
+        env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
     )
-
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Use the project .env locally and Railway variables in production.
-
-        Pydantic normally gives process environment variables precedence over .env.
-        That can silently reuse an old Windows OPENAI_API_KEY even when the project
-        .env contains a newer key. Local development deliberately gives the project
-        .env precedence. Railway keeps the conventional process-environment precedence.
-        """
-
-        if os.getenv("RAILWAY_ENVIRONMENT"):
-            return (
-                init_settings,
-                env_settings,
-                dotenv_settings,
-                file_secret_settings,
-            )
-        return (
-            init_settings,
-            dotenv_settings,
-            env_settings,
-            file_secret_settings,
-        )
 
     app_name: str = "Crypto Paper Trader"
     app_env: str = "development"
@@ -90,8 +31,8 @@ class Settings(BaseSettings):
     poll_interval_seconds: int = Field(default=15, ge=10, le=900)
 
     default_market: str = "BTCUSDT"
-    default_execution_timeframe: str = "1hour"
-    default_trend_timeframe: str = "4hour"
+    default_execution_timeframe: str = "30min"
+    default_trend_timeframe: str = "1hour"
     default_duration_hours: float = Field(default=24.0, gt=0, le=168)
     default_initial_capital: float = Field(default=1000.0, gt=0)
 
@@ -166,9 +107,6 @@ class Settings(BaseSettings):
     ai_pattern_training_max_rows: int = Field(default=8000, ge=240, le=50000)
     ai_history_target_candles: int = Field(default=8760, ge=1000, le=50000)
     ai_history_backfill_batches_per_cycle: int = Field(default=12, ge=1, le=50)
-    ai_history_backfill_max_empty_windows: int = Field(default=36, ge=4, le=200)
-    ai_history_backfill_retry_seconds: int = Field(default=60, ge=15, le=3600)
-    ai_history_backfill_window_candles: int = Field(default=1000, ge=250, le=5000)
     ai_pattern_recency_half_life_days: float = Field(default=120.0, ge=7, le=730)
     ai_pattern_neighbors: int = Field(default=32, ge=8, le=200)
     ai_pattern_clusters: int = Field(default=8, ge=2, le=32)
@@ -214,39 +152,19 @@ class Settings(BaseSettings):
     selector_min_confidence: float = Field(default=0.60, ge=0, le=1)
     selector_min_expected_net_return: float = Field(default=0.0030, ge=0, le=0.1)
     selector_min_reward_risk_ratio: float = Field(default=1.30, gt=0, le=10)
-    selector_model_version: str = "ADAPTIVE-PATTERN-RESEARCH-v8-RANGE-BOUND"
+    selector_model_version: str = "ADAPTIVE-RESEARCH-SELECTOR-v3-CHAMPION-CHALLENGER"
 
-    adaptive_research_web_enabled: bool = True
-    adaptive_research_openai_model: str = "gpt-5"
-    adaptive_research_ai_review_enabled: bool = True
-    adaptive_research_openai_review_model: str = "gpt-5"
-    # OpenAI receives only a compact statistical summary of the selected asset.
-    # Local pattern matching and backtests remain authoritative when the API is unavailable.
-    adaptive_research_web_timeout_seconds: float = Field(default=90.0, ge=5, le=300)
-    adaptive_research_openai_timeout_seconds: float = Field(default=90.0, ge=10, le=300)
-    adaptive_research_openai_attempts: int = Field(default=2, ge=1, le=3)
     adaptive_research_interval_hours: float = Field(default=12.0, ge=1, le=168)
     adaptive_research_retry_minutes: int = Field(default=30, ge=5, le=1440)
-    adaptive_research_transition_retry_minutes: int = Field(default=15, ge=5, le=240)
     adaptive_research_min_candles: int = Field(default=800, ge=400, le=5000)
-    adaptive_research_target_candles: int = Field(default=10000, ge=1000, le=50000)
-    adaptive_research_max_history_candles: int = Field(default=30000, ge=2000, le=50000)
-    adaptive_pattern_window_candles: int = Field(default=24, ge=6, le=120)
-    adaptive_pattern_horizon_candles: int = Field(default=1, ge=1, le=12)
-    adaptive_pattern_neighbors: int = Field(default=64, ge=8, le=250)
-    adaptive_research_validation_rows: int = Field(default=240, ge=60, le=2000)
+    adaptive_research_validation_rows: int = Field(default=240, ge=60, le=1000)
     adaptive_research_walk_forward_folds: int = Field(default=3, ge=2, le=8)
-    adaptive_research_max_candidates: int = Field(default=15, ge=5, le=30)
+    adaptive_research_max_candidates: int = Field(default=15, ge=2, le=20)
     adaptive_research_min_trades: int = Field(default=20, ge=5, le=200)
-    adaptive_research_hard_min_trades: int = Field(default=10, ge=3, le=200)
     adaptive_research_min_profit_factor: float = Field(default=1.20, ge=1.0, le=5.0)
     adaptive_research_max_drawdown_pct: float = Field(default=0.10, gt=0, le=0.50)
     adaptive_research_min_stability: float = Field(default=0.67, ge=0, le=1)
     adaptive_research_min_validation_score: float = Field(default=60.0, ge=0, le=100)
-    adaptive_research_champion_min_improvement: float = Field(default=3.0, ge=0, le=25)
-
-    # Used only by the server-side research agent. Never expose this value in the frontend.
-    openai_api_key: str | None = None
 
     # Larry volatility breakout and EMA pullback defaults for intraday profiles.
     larry_breakout_lookback: int = Field(default=12, ge=4, le=100)
@@ -271,38 +189,6 @@ class Settings(BaseSettings):
     lbr_anti_setup_max_age_bars: int = Field(default=6, ge=1, le=48)
     lbr_anti_require_signal_cross: bool = True
     lbr_anti_require_utc_baseline_alignment: bool = True
-
-    @field_validator("openai_api_key", "admin_api_key", mode="before")
-    @classmethod
-    def normalize_secret_value(cls, value: object) -> str | None:
-        """Normalize secrets copied from local files or deployment dashboards."""
-
-        if value is None:
-            return None
-        cleaned = str(value).strip()
-        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {"\"", "'"}:
-            cleaned = cleaned[1:-1].strip()
-        if cleaned.lower().startswith("bearer "):
-            cleaned = cleaned[7:].strip()
-        return cleaned or None
-
-    @property
-    def openai_api_key_source(self) -> str:
-        """Describe where the effective OpenAI key came from without exposing it."""
-
-        if os.getenv("RAILWAY_ENVIRONMENT") and os.getenv("OPENAI_API_KEY"):
-            return "RAILWAY_VARIABLE"
-        if _env_file_defines("OPENAI_API_KEY"):
-            return "PROJECT_ENV_FILE"
-        if os.getenv("OPENAI_API_KEY"):
-            return "PROCESS_ENVIRONMENT"
-        if self.openai_api_key:
-            return "DIRECT_CONFIGURATION"
-        return "NOT_CONFIGURED"
-
-    @property
-    def project_env_file(self) -> Path:
-        return PROJECT_ENV_FILE
 
     @field_validator("default_market")
     @classmethod

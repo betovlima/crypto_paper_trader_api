@@ -23,11 +23,9 @@ async def retry_adaptive_selector_history(
     try:
         result = await worker.retry_adaptive_selector_history(experiment_id)
     except LookupError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return AdaptiveHistoryRetryResponse(**result)
+
 
 @router.post(
     "/retry-research",
@@ -37,14 +35,9 @@ async def retry_adaptive_selector_history(
 async def retry_adaptive_selector_research(
     experiment_id: str,
 ) -> AdaptiveResearchRetryResponse:
-    """Reload OpenAI settings and force an immediate adaptive research cycle."""
-
+    """Force the next adaptive research cycle using the local research engine."""
     try:
         result = await worker.retry_adaptive_selector_research(experiment_id)
     except LookupError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return AdaptiveResearchRetryResponse(**result)
-

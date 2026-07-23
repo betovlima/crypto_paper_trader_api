@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "crypto-paper-trader"
-version = "0.16.17"
-description = "A PAPER_ONLY crypto strategy research application with selected-asset time-series pattern discovery, walk-forward validation and an independent AI opportunity scanner."
+version = "0.16.10"
+description = "A PAPER_ONLY crypto strategy research application with local adaptive strategy generation, walk-forward validation and an independent quantitative opportunity scanner."
 authors = ["Roberto"]
 readme = "README.md"
 packages = [{ include = "crypto_paper_trader_api", from = "src" }]

@@ -15,7 +15,6 @@ from ..models import (
 from ..schemas import StrategyComparisonHistoryResponse, StrategyComparisonResponse
 from ..strategy_codes import (
     ACTIVE_STRATEGY_CODES,
-    ADAPTIVE_STRATEGY_SELECTOR,
     STRATEGY_DESCRIPTIONS,
     STRATEGY_DISPLAY_NAMES,
 )
@@ -56,28 +55,6 @@ def strategy_summary(
     gross_equity = account.initial_capital + gross_pnl
 
     payload = account.to_public_dict(market_price)
-
-    # The adaptive selector writes its full research diagnostics both to the account
-    # and to the immutable decision snapshot. Older databases or interrupted commits
-    # can leave the account copy empty even though the latest decision is complete.
-    # Keep the public account endpoint consistent with the dashboard by recovering
-    # missing selector fields from the latest selector decision.
-    if account.strategy_code == ADAPTIVE_STRATEGY_SELECTOR:
-        latest_selector_decision = session.scalar(
-            select(StrategyDecisionSnapshot)
-            .where(
-                StrategyDecisionSnapshot.experiment_id == account.experiment_id,
-                StrategyDecisionSnapshot.strategy_code == ADAPTIVE_STRATEGY_SELECTOR,
-            )
-            .order_by(StrategyDecisionSnapshot.candle_timestamp.desc())
-            .limit(1)
-        )
-        if latest_selector_decision is not None:
-            selector_snapshot = latest_selector_decision.to_dict()
-            for key, value in selector_snapshot.items():
-                if key.startswith("selector_") and payload.get(key) is None and value is not None:
-                    payload[key] = value
-
     latest_snapshot = session.scalar(
         select(StrategyMarketSnapshot)
         .where(StrategyMarketSnapshot.strategy_account_id == account.id)
