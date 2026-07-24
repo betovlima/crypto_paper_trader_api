@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .common import *  # noqa: F403
+from ..adaptive_intelligence import PatternConfirmationService
 
 class AdaptiveStrategySelector:
     """Researches, validates and executes a generated strategy for the selected market."""
@@ -47,6 +48,7 @@ class AdaptiveStrategySelector:
         execution_timeframe: str,
         trend_timeframe: str,
         now: datetime,
+        pattern_decision: StrategyDecision | None = None,
     ) -> StrategyDecision:
         regime = self.detect_regime(current_row, trend_row)
         close = float(current_row["close"])
@@ -146,7 +148,7 @@ class AdaptiveStrategySelector:
             f"origin={active_spec.origin}; regime={regime}; rule={live['reason']}; "
             f"validation_score={float(account.selector_validation_score or 0):.2f}"
         )
-        return StrategyDecision(
+        selector_decision = StrategyDecision(
             signal,
             "RESEARCH_SELECTOR",
             signal,
@@ -182,3 +184,4 @@ class AdaptiveStrategySelector:
             selector_ai_review_score=account.selector_ai_review_score,
             selector_ai_review_summary=account.selector_ai_review_summary,
         )
+        return PatternConfirmationService.combine(selector_decision, pattern_decision)

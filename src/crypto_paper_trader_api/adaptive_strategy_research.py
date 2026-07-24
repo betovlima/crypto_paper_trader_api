@@ -754,7 +754,12 @@ class AdaptiveStrategyResearchEngine:
         self, market: str, regime: str, execution_timeframe: str,
         trend_timeframe: str, frame: pd.DataFrame, costs: ExecutionCosts, now: datetime,
     ) -> StrategyResearchOutcome:
-        del market, execution_timeframe, trend_timeframe
+        research_context = {
+            "market": market,
+            "execution_timeframe": execution_timeframe,
+            "trend_timeframe": trend_timeframe,
+            "regime": regime,
+        }
         next_research_at = now + timedelta(hours=self.settings.adaptive_research_interval_hours)
         retry_at = now + timedelta(minutes=self.settings.adaptive_research_retry_minutes)
         candidates = self.templates.candidates(regime)
@@ -783,6 +788,7 @@ class AdaptiveStrategyResearchEngine:
             for gate in row.get("failed_gates", []):
                 rejection_counts[gate] = rejection_counts.get(gate, 0) + 1
         diagnostics = {
+            "context": research_context,
             "evaluated_count": len(scored_rows),
             "eligible_count": sum(1 for row in scored_rows if row.get("eligible")),
             "best_candidate": scored_rows[0] if scored_rows else None,
@@ -798,7 +804,8 @@ class AdaptiveStrategyResearchEngine:
                 specification=None, regime=regime, metrics=None,
                 research_status="WAITING_FOR_VALID_STRATEGY",
                 research_summary=(
-                    f"{len(scored_rows)} local hypotheses were generated and tested. "
+                    f"{len(scored_rows)} local hypotheses were generated and tested for "
+                    f"{market} ({execution_timeframe}/{trend_timeframe}). "
                     "None reached the activation requirements. The best rejected candidate "
                     "and every failed validation gate were preserved for diagnosis."
                 ),
@@ -811,7 +818,8 @@ class AdaptiveStrategyResearchEngine:
         return StrategyResearchOutcome(
             specification=winner, regime=regime, metrics=metrics, research_status="ACTIVE",
             research_summary=(
-                f"Selected {winner.name} after validating {len(candidates)} local hypotheses. "
+                f"Selected {winner.name} for {market} ({execution_timeframe}/{trend_timeframe}) "
+                f"after validating {len(candidates)} local hypotheses. "
                 f"It achieved the strongest cost-adjusted walk-forward score for regime {regime}."
             ),
             candidate_scores_json=candidate_scores_json,

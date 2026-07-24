@@ -152,9 +152,9 @@ class Settings(BaseSettings):
     selector_min_confidence: float = Field(default=0.60, ge=0, le=1)
     selector_min_expected_net_return: float = Field(default=0.0030, ge=0, le=0.1)
     selector_min_reward_risk_ratio: float = Field(default=1.30, gt=0, le=10)
-    selector_model_version: str = "ADAPTIVE-RESEARCH-SELECTOR-v3-CHAMPION-CHALLENGER"
+    selector_model_version: str = "ADAPTIVE-RESEARCH-SELECTOR-v4-PATTERN-CONFIRMATION"
 
-    adaptive_research_interval_hours: float = Field(default=12.0, ge=1, le=168)
+    adaptive_research_interval_hours: float = Field(default=1.0, ge=0.5, le=168)
     adaptive_research_retry_minutes: int = Field(default=30, ge=5, le=1440)
     adaptive_research_min_candles: int = Field(default=800, ge=400, le=5000)
     adaptive_research_validation_rows: int = Field(default=240, ge=60, le=1000)

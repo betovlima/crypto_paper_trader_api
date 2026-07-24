@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import math
 
 from sqlalchemy import func, select
@@ -55,6 +55,22 @@ def strategy_summary(
     gross_equity = account.initial_capital + gross_pnl
 
     payload = account.to_public_dict(market_price)
+
+    # Older experiments may not have a persisted next adaptive-research schedule.
+    # Expose a deterministic fallback so the UI countdown remains meaningful while
+    # the worker persists the repaired schedule on its next cycle.
+    if (
+        account.strategy_code == "ADAPTIVE_STRATEGY_SELECTOR"
+        and payload.get("selector_next_research_at") is None
+    ):
+        base_time = account.selector_last_completed_at
+        if base_time is None:
+            base_time = datetime.now(timezone.utc)
+        elif base_time.tzinfo is None:
+            base_time = base_time.replace(tzinfo=timezone.utc)
+        payload["selector_next_research_at"] = base_time + timedelta(hours=1)
+        payload["selector_schedule_inferred"] = True
+
     if account.selector_candidate_scores is None:
         latest_selector_snapshot = session.scalar(
             select(StrategyDecisionSnapshot)
