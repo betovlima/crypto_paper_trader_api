@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "crypto-paper-trader"
-version = "0.16.17"
+version = "0.16.18"
 description = "A PAPER_ONLY crypto strategy research application with local adaptive strategy generation, walk-forward validation and an independent quantitative opportunity scanner."
 authors = ["Roberto"]
 readme = "README.md"

@@ -119,7 +119,10 @@ def _insert_missing_accounts_from_parent_rows() -> None:
             ai_risk_status,
             ai_risk_reason,
             selector_model_version,
-            selector_market_regime
+            selector_market_regime,
+            selector_research_status,
+            selector_research_summary,
+            selector_next_research_at
         )
         SELECT
             experiment.id,
@@ -206,7 +209,10 @@ def _insert_missing_accounts_from_parent_rows() -> None:
             :ai_risk_status,
             :ai_risk_reason,
             :selector_model_version,
-            :selector_market_regime
+            :selector_market_regime,
+            :selector_research_status,
+            :selector_research_summary,
+            CASE WHEN :is_selector = 1 THEN CURRENT_TIMESTAMP ELSE NULL END
         FROM experiments AS experiment
         WHERE NOT EXISTS (
             SELECT 1
@@ -242,6 +248,23 @@ def _insert_missing_accounts_from_parent_rows() -> None:
                    WHEN :is_selector = 1 AND selector_market_regime IS NULL
                    THEN :selector_market_regime
                    ELSE selector_market_regime
+               END,
+               selector_research_status = CASE
+                   WHEN :is_selector = 1
+                        AND (selector_research_status IS NULL OR selector_research_status = '')
+                   THEN :selector_research_status
+                   ELSE selector_research_status
+               END,
+               selector_research_summary = CASE
+                   WHEN :is_selector = 1
+                        AND (selector_research_summary IS NULL OR selector_research_summary = '')
+                   THEN :selector_research_summary
+                   ELSE selector_research_summary
+               END,
+               selector_next_research_at = CASE
+                   WHEN :is_selector = 1 AND selector_next_research_at IS NULL
+                   THEN CURRENT_TIMESTAMP
+                   ELSE selector_next_research_at
                END
          WHERE strategy_code = :strategy_code
         """
@@ -282,6 +305,12 @@ def _insert_missing_accounts_from_parent_rows() -> None:
                     settings.selector_model_version if is_selector else None
                 ),
                 "selector_market_regime": "UNDEFINED" if is_selector else None,
+                "selector_research_status": "SCHEDULED" if is_selector else None,
+                "selector_research_summary": (
+                    "Initial local adaptive research was scheduled."
+                    if is_selector
+                    else None
+                ),
                 "is_ai_pattern": int(is_ai_pattern),
                 "is_selector": int(is_selector),
             }

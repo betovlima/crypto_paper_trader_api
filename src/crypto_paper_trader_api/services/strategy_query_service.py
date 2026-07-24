@@ -85,9 +85,11 @@ def strategy_summary(
             payload["selector_candidate_scores"] = (
                 latest_selector_snapshot.selector_candidate_scores
             )
+            account_status = (account.selector_research_status or "").upper()
             payload["selector_research_status"] = (
-                account.selector_research_status
-                or latest_selector_snapshot.selector_research_status
+                latest_selector_snapshot.selector_research_status
+                if account_status in {"", "SCHEDULED"}
+                else account.selector_research_status
             )
     latest_snapshot = session.scalar(
         select(StrategyMarketSnapshot)
