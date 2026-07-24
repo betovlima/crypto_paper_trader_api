@@ -52,7 +52,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.16.10",
+    version="0.16.17",
     description=(
         "PAPER_ONLY crypto strategy research using public MEXC Spot data. "
         "All persistent state is stored in SQLite. HTTP routers and application services "

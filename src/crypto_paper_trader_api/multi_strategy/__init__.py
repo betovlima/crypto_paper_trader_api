@@ -7,6 +7,7 @@ from .common import StrategyDecision
 from .hybrid import HybridComparisonStrategy
 from .ema_crossover import EmaCrossoverStrategy
 from .ema_pullback import EmaPullbackStrategy
+from .fibonacci_trend_pullback import FibonacciTrendPullbackStrategy
 from .stormer import StormerFilhaMalCriadaStrategy
 from .larry_breakout import LarryVolatilityBreakoutStrategy
 from .lbr_310 import Lbr310AntiContextStrategy
@@ -18,6 +19,7 @@ __all__ = [
     "HybridComparisonStrategy",
     "EmaCrossoverStrategy",
     "EmaPullbackStrategy",
+    "FibonacciTrendPullbackStrategy",
     "StormerFilhaMalCriadaStrategy",
     "LarryVolatilityBreakoutStrategy",
     "Lbr310AntiContextStrategy",

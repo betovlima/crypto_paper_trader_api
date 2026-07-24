@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
+import re
 import sqlite3
 from collections.abc import Generator
 
 from sqlalchemy import Engine, create_engine, event, text
+from sqlalchemy.schema import CreateIndex, CreateTable
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -37,6 +42,7 @@ def init_database() -> None:
 
     Base.metadata.create_all(bind=engine)
     _migrate_additive_columns()
+    repair_strategy_accounts_schema()
     _migrate_active_coinex_experiments_to_mexc()
 
 
@@ -253,6 +259,140 @@ def _migrate_additive_columns() -> None:
                 if column not in current:
                     connection.exec_driver_sql(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {ddl}')
 
+
+
+def _strategy_accounts_foreign_key_is_valid(connection) -> bool:
+    rows = connection.exec_driver_sql('PRAGMA foreign_key_list("strategy_accounts")').fetchall()
+    experiment_links = [row for row in rows if str(row[3]) == "experiment_id"]
+    return (
+        len(experiment_links) == 1
+        and str(experiment_links[0][2]) == "experiments"
+        and str(experiment_links[0][4]) == "id"
+    )
+
+
+def repair_strategy_accounts_schema(force: bool = False) -> bool:
+    """Repair legacy SQLite foreign keys before strategy-account synchronization.
+
+    Some early databases were rebuilt by renaming the ``experiments`` table. SQLite can
+    preserve that temporary table name inside an already existing child foreign key. The
+    ORM still reads rows from the current ``experiments`` table, but inserts into
+    ``strategy_accounts`` then fail with ``FOREIGN KEY constraint failed``.
+
+    The repair is data preserving: account identifiers and every compatible column are
+    copied into a model-generated table whose parent is the current ``experiments`` table.
+    Rows whose experiment no longer exists are intentionally excluded because they are
+    already invalid orphan records.
+    """
+
+    from .models import StrategyAccount
+
+    with engine.connect() as connection:
+        exists = connection.execute(
+            text(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='strategy_accounts'"
+            )
+        ).scalar()
+        if not exists:
+            return False
+        if not force and _strategy_accounts_foreign_key_is_valid(connection):
+            return False
+
+    table = StrategyAccount.__table__
+    temporary_table = "strategy_accounts__fk_repair"
+    create_sql = str(CreateTable(table).compile(dialect=engine.dialect))
+    create_sql = re.sub(
+        r"CREATE TABLE\s+strategy_accounts\b",
+        f'CREATE TABLE "{temporary_table}"',
+        create_sql,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    index_sql = [
+        str(CreateIndex(index).compile(dialect=engine.dialect))
+        for index in table.indexes
+    ]
+
+    raw_connection = engine.raw_connection()
+    cursor = raw_connection.cursor()
+    rebuilt = False
+    try:
+        cursor.execute("PRAGMA foreign_keys=OFF")
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute(f'DROP TABLE IF EXISTS "{temporary_table}"')
+        cursor.execute(create_sql)
+
+        old_columns = {
+            str(row[1])
+            for row in cursor.execute('PRAGMA table_info("strategy_accounts")').fetchall()
+        }
+        model_columns = [column.name for column in table.columns]
+        common_columns = [name for name in model_columns if name in old_columns]
+        if not common_columns:
+            raise RuntimeError("strategy_accounts has no compatible columns to repair")
+
+        quoted_columns = ", ".join(f'"{name}"' for name in common_columns)
+        orphan_count = cursor.execute(
+            "SELECT COUNT(*) "
+            "FROM strategy_accounts AS account "
+            "WHERE NOT EXISTS ("
+            "SELECT 1 FROM experiments AS experiment "
+            "WHERE experiment.id = account.experiment_id"
+            ")"
+        ).fetchone()[0]
+        copy_sql = (
+            f'INSERT INTO "{temporary_table}" ({quoted_columns}) '
+            f'SELECT {quoted_columns} '
+            'FROM strategy_accounts AS account '
+            'WHERE EXISTS ('
+            'SELECT 1 FROM experiments AS experiment '
+            'WHERE experiment.id = account.experiment_id'
+            ')'
+        )
+        cursor.execute(copy_sql)
+        cursor.execute('DROP TABLE "strategy_accounts"')
+        cursor.execute(
+            f'ALTER TABLE "{temporary_table}" RENAME TO "strategy_accounts"'
+        )
+        for statement in index_sql:
+            cursor.execute(statement)
+        raw_connection.commit()
+
+        cursor.execute("PRAGMA foreign_keys=ON")
+        violations = cursor.execute(
+            'PRAGMA foreign_key_check("strategy_accounts")'
+        ).fetchall()
+        if violations:
+            raise RuntimeError(
+                "strategy_accounts foreign-key repair did not restore integrity: "
+                f"{violations[:5]}"
+            )
+        if orphan_count:
+            logger.warning(
+                "Removed %s orphan strategy account(s) during foreign-key repair.",
+                orphan_count,
+            )
+        logger.warning(
+            "Rebuilt strategy_accounts with a valid foreign key to experiments.id."
+        )
+        rebuilt = True
+        return True
+    except Exception:
+        raw_connection.rollback()
+        raise
+    finally:
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        except sqlite3.Error:
+            pass
+        cursor.close()
+        raw_connection.close()
+        if rebuilt:
+            # Schema changes can leave pooled pysqlite connections holding stale prepared
+            # statements. Dispose the pool so the retry uses a fresh connection and reads
+            # the rebuilt foreign-key metadata.
+            engine.dispose()
 
 def _migrate_active_coinex_experiments_to_mexc() -> None:
     """Move only unfinished v0.12 experiments to the v0.13 MEXC cost model.

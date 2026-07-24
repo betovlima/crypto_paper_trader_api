@@ -99,6 +99,24 @@ class Settings(BaseSettings):
     ema9_entry_tick_rate: float = Field(default=0.0, ge=0, lt=0.01)
     ema9_setup_max_age_hours: float = Field(default=4.0, gt=0, le=48)
 
+    # Causal Fibonacci risk management. Pivots are confirmed only with already
+    # closed candles, so both live decisions and backtests avoid look-ahead bias.
+    fibonacci_pivot_bars: int = Field(default=3, ge=1, le=12)
+    fibonacci_impulse_lookback_bars: int = Field(default=120, ge=20, le=1000)
+    fibonacci_min_impulse_atr: float = Field(default=2.0, gt=0, le=20)
+    fibonacci_stop_buffer_atr: float = Field(default=0.25, ge=0, le=3)
+    fibonacci_max_stop_distance_atr: float = Field(default=3.0, gt=0, le=20)
+    ema9_trend_fibonacci_stop_level: float = Field(default=0.618, ge=0.1, le=0.95)
+
+    # Independent Fibonacci trend-pullback strategy. Existing strategies retain
+    # their original entry logic; only the EMA9 trend follower shares this stop engine.
+    fibonacci_pullback_entry_min: float = Field(default=0.382, ge=0.1, le=0.9)
+    fibonacci_pullback_entry_max: float = Field(default=0.618, ge=0.1, le=0.95)
+    fibonacci_pullback_initial_stop_level: float = Field(default=0.786, ge=0.2, le=0.99)
+    fibonacci_pullback_trailing_stop_level: float = Field(default=0.500, ge=0.1, le=0.95)
+    fibonacci_pullback_reward_risk_ratio: float = Field(default=2.0, gt=0, le=10)
+    fibonacci_pullback_extension_target: float = Field(default=1.272, ge=1.0, le=3.0)
+
     # Autonomous AI Pattern Trader. This remains PAPER_ONLY and learns directly
     # from chronological OHLCV windows instead of selecting a handcrafted setup.
     ai_pattern_mode: str = "PAPER_AUTONOMOUS"
