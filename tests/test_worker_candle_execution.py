@@ -154,6 +154,8 @@ def test_previously_processed_account_does_not_execute_twice() -> None:
 
 def test_historical_exit_takes_precedence_over_subsequent_hold() -> None:
     worker, session, snapshot, account, context = _inputs(is_recovered=True)
+    worker.broker.buy = Mock()
+    worker.broker.sell = Mock()
     events = {CURRENT_HYBRID: ("RECOVERED_EXIT", "Historical exit reconstructed")}
     count = worker._record_and_execute_candle_decisions(
         session=session,
@@ -166,7 +168,8 @@ def test_historical_exit_takes_precedence_over_subsequent_hold() -> None:
         recovered_trade_count=1,
     )
 
-    worker.broker.buy = Mock()
+    worker.broker.buy.assert_not_called()
+    worker.broker.sell.assert_not_called()
     assert events[CURRENT_HYBRID] == ("RECOVERED_EXIT", "Historical exit reconstructed")
     assert account.last_event == "RECOVERED_EXIT"
     assert snapshot.action_executed is False
