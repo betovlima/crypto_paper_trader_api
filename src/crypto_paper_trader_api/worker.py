@@ -462,48 +462,17 @@ class TraderWorker:
             account.strategy_code: ("PRICE_UPDATE", "Market and portfolio data updated.")
             for account in accounts
         }
-        live_action_accounts: set[int] = set()
-
-        for account in accounts:
-            if account.has_open_position and account.last_atr_14:
-                self.broker.update_dynamic_risk_levels(
-                    account=account,
-                    market_high=market_price,
-                    atr=float(account.last_atr_14),
-                    costs=costs,
-                    profile=profile,
-                )
-                exit_reason = self._live_exit_reason(
-                    account=account,
-                    market_price=market_price,
-                    best_bid=best_bid,
-                    costs=costs,
-                    profile=profile,
-                    now=now,
-                )
-                if exit_reason:
-                    self.broker.sell(
-                        session=session,
-                        experiment=experiment,
-                        account=account,
-                        mid_market_price=market_price,
-                        best_bid=best_bid,
-                        costs=costs,
-                        executed_at=now,
-                        reason=exit_reason,
-                        decision_id=None,
-                        profile=profile,
-                    )
-                    live_action_accounts.add(account.id)
-                    events[account.strategy_code] = (
-                        exit_reason,
-                        self._event_message(exit_reason),
-                    )
-                    account.last_event = exit_reason
-                    account.last_status_message = self._event_message(exit_reason)
-
-            # EMA 9 entries are confirmed only after a candle closes above the trigger.
-            # Live monitoring remains responsible for protective exits, not new entries.
+        live_action_accounts = self._monitor_live_protective_exits(
+            session=session,
+            experiment=experiment,
+            accounts=accounts,
+            market_price=market_price,
+            best_bid=best_bid,
+            costs=costs,
+            profile=profile,
+            now=now,
+            events=events,
+        )
 
         analysis_due = self._analysis_is_due(experiment=experiment, now=now)
         if analysis_due:
@@ -562,6 +531,65 @@ class TraderWorker:
 
         if datetime.now(timezone.utc) >= self._as_utc(experiment.scheduled_end_at):
             await self._finalize(session, experiment, datetime.now(timezone.utc), "FINISHED")
+
+    def _monitor_live_protective_exits(
+        self,
+        *,
+        session: Session,
+        experiment: Experiment,
+        accounts: list[StrategyAccount],
+        market_price: float,
+        best_bid: float,
+        costs: ExecutionCosts,
+        profile: TradingProfile,
+        now: datetime,
+        events: dict[str, tuple[str, str]],
+    ) -> set[int]:
+        """Refresh live protection and return account IDs already sold this cycle."""
+        live_action_accounts: set[int] = set()
+
+        for account in accounts:
+            if account.has_open_position and account.last_atr_14:
+                self.broker.update_dynamic_risk_levels(
+                    account=account,
+                    market_high=market_price,
+                    atr=float(account.last_atr_14),
+                    costs=costs,
+                    profile=profile,
+                )
+                exit_reason = self._live_exit_reason(
+                    account=account,
+                    market_price=market_price,
+                    best_bid=best_bid,
+                    costs=costs,
+                    profile=profile,
+                    now=now,
+                )
+                if exit_reason:
+                    self.broker.sell(
+                        session=session,
+                        experiment=experiment,
+                        account=account,
+                        mid_market_price=market_price,
+                        best_bid=best_bid,
+                        costs=costs,
+                        executed_at=now,
+                        reason=exit_reason,
+                        decision_id=None,
+                        profile=profile,
+                    )
+                    live_action_accounts.add(account.id)
+                    events[account.strategy_code] = (
+                        exit_reason,
+                        self._event_message(exit_reason),
+                    )
+                    account.last_event = exit_reason
+                    account.last_status_message = self._event_message(exit_reason)
+
+            # EMA 9 entries are confirmed only after a candle closes above the trigger.
+            # Live monitoring remains responsible for protective exits, not new entries.
+
+        return live_action_accounts
 
     async def _run_candle_analysis(
         self,
