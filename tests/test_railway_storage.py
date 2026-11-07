@@ -24,7 +24,8 @@ def test_railway_without_volume_reports_persistence_warning(monkeypatch) -> None
 
     settings = Settings(app_env="production")
 
-    assert settings.resolved_data_dir == Path("/data")
+    # On Windows, a root-relative Unix-style path resolves on the current drive.
+    assert settings.resolved_data_dir == Path("/data").resolve()
     assert settings.persistent_storage_configured is False
     assert settings.storage_warning is not None
     assert "lost on every deploy" in settings.storage_warning
