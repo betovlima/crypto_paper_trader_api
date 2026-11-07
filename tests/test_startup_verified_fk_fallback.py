@@ -7,6 +7,7 @@ from crypto_paper_trader_api import database
 from crypto_paper_trader_api.database import Base
 from crypto_paper_trader_api.models import StrategyAccount
 from crypto_paper_trader_api.services import startup_service
+from crypto_paper_trader_api.strategy_codes import ADAPTIVE_STRATEGY_SELECTOR
 from crypto_paper_trader_api.worker import ACTIVE_STRATEGY_CODES, create_experiment_record
 
 
@@ -42,6 +43,13 @@ def test_verified_fk_bypass_commits_only_integrity_safe_accounts(tmp_path, monke
             )
         )
     assert {account.strategy_code for account in accounts} == set(ACTIVE_STRATEGY_CODES)
+    selector = next(
+        account for account in accounts
+        if account.strategy_code == ADAPTIVE_STRATEGY_SELECTOR
+    )
+    assert selector.selector_research_status == "SCHEDULED"
+    assert selector.selector_research_summary
+    assert selector.selector_next_research_at is not None
 
     with test_engine.connect() as connection:
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
@@ -187,3 +195,53 @@ def test_startup_falls_back_to_parent_row_copy_after_two_orm_fk_failures(
         assert connection.exec_driver_sql(
             'PRAGMA foreign_key_check("strategy_accounts")'
         ).fetchall() == []
+
+
+def test_parent_row_sync_repairs_missing_selector_schedule(tmp_path, monkeypatch) -> None:
+    test_engine = create_engine(
+        f"sqlite:///{tmp_path / 'selector-schedule-repair.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(test_engine)
+
+    experiment = create_experiment_record(
+        "BTCUSDT",
+        "30min",
+        "1hour",
+        24,
+        1000,
+    )
+    with Session(test_engine) as session:
+        session.add(experiment)
+        session.flush()
+        account = StrategyAccount(
+            experiment_id=experiment.id,
+            strategy_code=ADAPTIVE_STRATEGY_SELECTOR,
+            display_name="Adaptive Strategy Selector",
+            status="ACTIVE",
+            initial_capital=1000.0,
+            cash_balance=1000.0,
+            asset_quantity=0.0,
+            max_equity=1000.0,
+            selector_research_status=None,
+            selector_research_summary=None,
+            selector_next_research_at=None,
+        )
+        session.add(account)
+        experiment_id = experiment.id
+        session.commit()
+
+    monkeypatch.setattr(database, "engine", test_engine)
+    startup_service._synchronize_strategy_accounts_with_verified_fk_bypass()
+
+    with Session(test_engine) as session:
+        selector = session.scalar(
+            select(StrategyAccount).where(
+                StrategyAccount.experiment_id == experiment_id,
+                StrategyAccount.strategy_code == ADAPTIVE_STRATEGY_SELECTOR,
+            )
+        )
+        assert selector is not None
+        assert selector.selector_research_status == "SCHEDULED"
+        assert selector.selector_research_summary
+        assert selector.selector_next_research_at is not None

@@ -131,3 +131,48 @@ def test_history_sync_diagnostics_are_merged_into_selector_payload(monkeypatch) 
     assert payload["history"]["stored_candles"] == 314
     assert payload["history"]["backfill_status"] == "PARTIAL"
     assert payload["history"]["backfill_last_attempt_at"] == "2026-07-23T02:05:00+00:00"
+
+
+def test_missing_selector_schedule_is_repaired_without_crashing(monkeypatch) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    testing_session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    monkeypatch.setattr(worker_module, "SessionLocal", testing_session)
+
+    now = datetime.now(timezone.utc)
+    with testing_session() as session:
+        experiment = _experiment(now)
+        session.add(experiment)
+        session.flush()
+        account = _selector_account(experiment.id, now)
+        account.selector_research_status = None
+        account.selector_research_summary = None
+        account.selector_next_research_at = None
+        session.add(account)
+        session.commit()
+
+    worker = TraderWorker(Settings())
+    try:
+        with testing_session() as session:
+            experiment = session.get(Experiment, "background-history-test")
+            result = asyncio.run(
+                worker._refresh_waiting_selector_history(
+                    session=session,
+                    experiment=experiment,
+                    now=now,
+                )
+            )
+            account = session.query(StrategyAccount).filter_by(
+                experiment_id="background-history-test",
+                strategy_code=ADAPTIVE_STRATEGY_SELECTOR,
+            ).one()
+            assert result is None
+            assert account.selector_research_status == "SCHEDULED"
+            assert account.selector_next_research_at is not None
+            assert account.selector_next_research_at >= now.replace(tzinfo=None)
+    finally:
+        asyncio.run(worker.client.close())

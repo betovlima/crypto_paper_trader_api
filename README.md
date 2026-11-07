@@ -1,5 +1,12 @@
 # Crypto Paper Trader API
 
+## v0.16.18 — Null-safe adaptive research scheduling
+
+- Repairs missing adaptive-research schedules for legacy selector accounts.
+- Prevents a null `selector_next_research_at` from crashing the live worker.
+- Initializes selector scheduling fields in both ORM and SQLite parent-row recovery paths.
+- Regression suite: 105 tests passed.
+
 ## v0.16.17 — SQLite parent-row strategy synchronization
 
 - replaces the foreign-key bypass fallback with an integrity-enforced `INSERT ... SELECT` directly from `experiments`;

@@ -292,14 +292,20 @@ class TraderWorker:
             )
             if selector_account is None:
                 return None
-            due_at = self._as_utc(selector_account.selector_next_research_at)
+            due_at = self._as_utc_or_none(
+                selector_account.selector_next_research_at
+            )
             if due_at is None:
-                last_completed = self._as_utc(selector_account.selector_last_completed_at)
+                last_completed = self._as_utc_or_none(
+                    selector_account.selector_last_completed_at
+                )
                 selector_account.selector_next_research_at = (
                     (last_completed or current_now)
                     + timedelta(hours=self.settings.adaptive_research_interval_hours)
                 )
-                due_at = self._as_utc(selector_account.selector_next_research_at)
+                due_at = self._as_utc_or_none(
+                    selector_account.selector_next_research_at
+                )
                 if not selector_account.selector_research_status:
                     selector_account.selector_research_status = "SCHEDULED"
                 active_session.flush()
@@ -1889,6 +1895,13 @@ class TraderWorker:
         return result.astimezone(timezone.utc)
 
     @staticmethod
+    def _as_utc_or_none(value: datetime | None) -> datetime | None:
+        """Normalize an optional database datetime without dereferencing ``None``."""
+        if value is None:
+            return None
+        return TraderWorker._as_utc(value)
+
+    @staticmethod
     def _as_utc(value: datetime) -> datetime:
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
@@ -1927,6 +1940,19 @@ def ensure_strategy_accounts(
             if code == AI_PATTERN_TRADER:
                 existing[code].ai_mode = get_settings().ai_pattern_mode
                 existing[code].ai_model_version = "AI-PATTERN-v1"
+            if code == ADAPTIVE_STRATEGY_SELECTOR:
+                existing[code].selector_model_version = get_settings().selector_model_version
+                existing[code].selector_market_regime = (
+                    existing[code].selector_market_regime or "UNDEFINED"
+                )
+                if existing[code].selector_next_research_at is None:
+                    existing[code].selector_next_research_at = datetime.now(timezone.utc)
+                if not existing[code].selector_research_status:
+                    existing[code].selector_research_status = "SCHEDULED"
+                if not existing[code].selector_research_summary:
+                    existing[code].selector_research_summary = (
+                        "Initial local adaptive research was scheduled."
+                    )
             continue
         copy_legacy_hybrid = code == CURRENT_HYBRID
         account = StrategyAccount(
@@ -1997,6 +2023,19 @@ def ensure_strategy_accounts(
             ),
             selector_market_regime=(
                 "UNDEFINED" if code == ADAPTIVE_STRATEGY_SELECTOR else None
+            ),
+            selector_research_status=(
+                "SCHEDULED" if code == ADAPTIVE_STRATEGY_SELECTOR else None
+            ),
+            selector_research_summary=(
+                "Initial local adaptive research was scheduled."
+                if code == ADAPTIVE_STRATEGY_SELECTOR
+                else None
+            ),
+            selector_next_research_at=(
+                datetime.now(timezone.utc)
+                if code == ADAPTIVE_STRATEGY_SELECTOR
+                else None
             ),
         )
         session.add(account)
