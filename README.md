@@ -1,5 +1,7 @@
 # Crypto Paper Trader API
 
+This repository contains the Python/FastAPI backend only. The React/Vite frontend is maintained separately at https://github.com/betovlima/crypto_paper_trader_front, and ML backtests have their own API at https://github.com/betovlima/crypto_paper_trader_ml_api. No frontend assets are built or deployed from this repository.
+
 ## v0.16.18 — Null-safe adaptive research scheduling
 
 - Repairs missing adaptive-research schedules for legacy selector accounts.
