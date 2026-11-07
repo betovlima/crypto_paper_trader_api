@@ -290,6 +290,17 @@ class TraderWorker:
             if selector_account is None:
                 return None
             due_at = self._as_utc(selector_account.selector_next_research_at)
+            if due_at is None:
+                last_completed = self._as_utc(selector_account.selector_last_completed_at)
+                selector_account.selector_next_research_at = (
+                    (last_completed or current_now)
+                    + timedelta(hours=self.settings.adaptive_research_interval_hours)
+                )
+                due_at = self._as_utc(selector_account.selector_next_research_at)
+                if not selector_account.selector_research_status:
+                    selector_account.selector_research_status = "SCHEDULED"
+                active_session.flush()
+
             waiting = (selector_account.selector_research_status or "").upper() in {
                 "WAITING_FOR_HISTORY", "INSUFFICIENT_HISTORY", "RETRY_REQUESTED",
                 "RESEARCH_ERROR", "BUILDING_HISTORY",
@@ -901,6 +912,7 @@ class TraderWorker:
                 experiment.execution_timeframe,
                 experiment.trend_timeframe,
                 candle_end,
+                decisions.get(AI_PATTERN_TRADER),
             )
             selector_decision = self._with_history_sync_diagnostics(
                 selector_decision, experiment.market, experiment.execution_timeframe

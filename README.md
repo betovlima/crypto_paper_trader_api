@@ -245,3 +245,16 @@ All executions are simulated. Public MEXC data is used for analysis, and the ada
 ## v0.16.0 — Stormer Filha Mal Criada
 
 Adds a long-only EMA ribbon pullback strategy using EMAs 20, 25, 30, 35, 40, 45 and 50, an armed breakout trigger, a stop below the next untouched EMA and a 3R target.
+
+## Adaptive selector and pattern confirmation
+
+Starting in API v0.16.11, the adaptive selector and the local candle-pattern model operate as one market-specific decision flow:
+
+- research is executed with the experiment market, execution timeframe and trend timeframe;
+- candidate strategies are backtested on the MEXC history synchronized for that market;
+- a BUY signal from the selected strategy requires approval from the local pattern model;
+- SELL signals and protective exits are never blocked by pattern confirmation;
+- pattern confidence, expected return, regime and risk diagnostics are copied to the adaptive decision snapshot;
+- adaptive research runs hourly by default and retries after ten minutes when needed.
+
+No OpenAI or paid generative-model request is used by this flow.
