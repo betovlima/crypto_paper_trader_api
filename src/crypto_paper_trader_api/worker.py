@@ -1670,6 +1670,59 @@ class TraderWorker:
         best_bid = float(experiment.best_bid or market_price * (1 - costs.half_spread_rate))
         best_ask = float(experiment.best_ask or market_price * (1 + costs.half_spread_rate))
         accounts = self._strategy_accounts(session, experiment.id)
+        self._finalize_strategy_accounts(
+            session=session,
+            experiment=experiment,
+            accounts=accounts,
+            finished_at=finished_at,
+            final_status=final_status,
+            close_open_positions=close_open_positions,
+            market_price=market_price,
+            best_bid=best_bid,
+            best_ask=best_ask,
+            costs=costs,
+            profile=profile,
+        )
+
+        experiment.last_price = market_price
+        experiment.last_market_update_at = finished_at
+        experiment.buy_and_hold_current_capital = self._buy_and_hold_final_capital(
+            experiment.initial_capital,
+            experiment.first_market_price or market_price,
+            market_price,
+            costs,
+        )
+        experiment.buy_and_hold_final_capital = self._buy_and_hold_final_capital(
+            experiment.initial_capital,
+            experiment.first_market_price or market_price,
+            market_price,
+            costs,
+        )
+        experiment.status = final_status
+        experiment.finished_at = finished_at
+        experiment.last_cycle_at = finished_at
+        experiment.last_market_event = final_status
+        self._mirror_hybrid_account(experiment, accounts)
+        session.commit()
+
+
+
+    def _finalize_strategy_accounts(
+        self,
+        *,
+        session: Session,
+        experiment: Experiment,
+        accounts: list[StrategyAccount],
+        finished_at: datetime,
+        final_status: str,
+        close_open_positions: bool,
+        market_price: float,
+        best_bid: float,
+        best_ask: float,
+        costs: ExecutionCosts,
+        profile: TradingProfile,
+    ) -> None:
+        """Close eligible positions and persist the original terminal account snapshots."""
         for account in accounts:
             if close_open_positions and account.has_open_position:
                 self.broker.sell(
@@ -1718,28 +1771,6 @@ class TraderWorker:
                     else "The experiment was finalized and consolidated."
                 ),
             )
-
-        experiment.last_price = market_price
-        experiment.last_market_update_at = finished_at
-        experiment.buy_and_hold_current_capital = self._buy_and_hold_final_capital(
-            experiment.initial_capital,
-            experiment.first_market_price or market_price,
-            market_price,
-            costs,
-        )
-        experiment.buy_and_hold_final_capital = self._buy_and_hold_final_capital(
-            experiment.initial_capital,
-            experiment.first_market_price or market_price,
-            market_price,
-            costs,
-        )
-        experiment.status = final_status
-        experiment.finished_at = finished_at
-        experiment.last_cycle_at = finished_at
-        experiment.last_market_event = final_status
-        self._mirror_hybrid_account(experiment, accounts)
-        session.commit()
-
 
     @staticmethod
     def _unrealized_pnl(account: StrategyAccount, best_bid: float, costs: ExecutionCosts) -> float:
