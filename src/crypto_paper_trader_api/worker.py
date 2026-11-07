@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 import logging
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -69,6 +69,25 @@ from .trading_profiles import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _CandleExecutionContext:
+    """Read-only market inputs shared by the decision persistence and execution phase."""
+
+    experiment: Experiment
+    candle_timestamp: datetime
+    candle_end: datetime
+    execution_row: pd.Series
+    trend_row: pd.Series
+    prediction: ModelPrediction
+    costs: ExecutionCosts
+    profile: TradingProfile
+    close_price: float
+    historical_bid: float
+    historical_ask: float
+    atr: float
+    is_recovered: bool
 
 
 class TraderWorker:
@@ -830,6 +849,61 @@ class TraderWorker:
             decisions=decisions,
         )
 
+        recovered_trade_count = self._record_and_execute_candle_decisions(
+            session=session,
+            accounts=accounts,
+            decisions=decisions,
+            context=_CandleExecutionContext(
+                experiment=experiment,
+                candle_timestamp=candle_timestamp,
+                candle_end=candle_end,
+                execution_row=execution_row,
+                trend_row=trend_row,
+                prediction=prediction,
+                costs=costs,
+                profile=profile,
+                close_price=close_price,
+                historical_bid=historical_bid,
+                historical_ask=historical_ask,
+                atr=atr,
+                is_recovered=is_recovered,
+            ),
+            live_action_accounts=live_action_accounts,
+            recovered_action_accounts=recovered_action_accounts,
+            events=events,
+            recovered_trade_count=recovered_trade_count,
+        )
+
+        experiment.last_processed_candle_at = candle_timestamp
+        return events, recovered_trade_count
+
+    def _record_and_execute_candle_decisions(
+        self,
+        *,
+        session: Session,
+        accounts: list[StrategyAccount],
+        decisions: dict[str, StrategyDecision],
+        context: _CandleExecutionContext,
+        live_action_accounts: set[int],
+        recovered_action_accounts: set[int],
+        events: dict[str, tuple[str, str]],
+        recovered_trade_count: int,
+    ) -> int:
+        """Persist snapshots before paper orders and preserve recovery event precedence."""
+        experiment = context.experiment
+        candle_timestamp = context.candle_timestamp
+        candle_end = context.candle_end
+        execution_row = context.execution_row
+        trend_row = context.trend_row
+        prediction = context.prediction
+        costs = context.costs
+        profile = context.profile
+        close_price = context.close_price
+        historical_bid = context.historical_bid
+        historical_ask = context.historical_ask
+        atr = context.atr
+        is_recovered = context.is_recovered
+
         for account in accounts:
             decision = decisions[account.strategy_code]
             position_before = "LONG" if account.has_open_position else "FLAT"
@@ -932,8 +1006,7 @@ class TraderWorker:
             account.last_event = event_type
             account.last_status_message = status_message
 
-        experiment.last_processed_candle_at = candle_timestamp
-        return events, recovered_trade_count
+        return recovered_trade_count
 
     async def _evaluate_specialist_decisions(
         self,
