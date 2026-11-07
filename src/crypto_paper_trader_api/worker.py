@@ -800,6 +800,160 @@ class TraderWorker:
                         )
 
 
+        # Evaluate specialist strategies first; the adaptive selector uses their results.
+        decisions = await self._evaluate_specialist_decisions(
+            accounts=accounts,
+            execution_indicators=execution_indicators,
+            current_index=current_index,
+            execution_row=execution_row,
+            previous_row=previous_row,
+            previous_previous_row=previous_previous_row,
+            trend_row=trend_row,
+            ai_model_frame=ai_model_frame,
+            prediction=prediction,
+            costs=costs,
+            profile=profile,
+            candle_timestamp=candle_timestamp,
+            candle_end=candle_end,
+            atr=atr,
+        )
+        await self._evaluate_selector_decision(
+            experiment=experiment,
+            accounts_by_code=accounts_by_code,
+            execution_row=execution_row,
+            trend_row=trend_row,
+            ai_model_frame=ai_model_frame,
+            costs=costs,
+            profile=profile,
+            candle_end=candle_end,
+            atr=atr,
+            decisions=decisions,
+        )
+
+        for account in accounts:
+            decision = decisions[account.strategy_code]
+            position_before = "LONG" if account.has_open_position else "FLAT"
+            snapshot = self._build_decision_snapshot(
+                experiment=experiment,
+                account=account,
+                candle_timestamp=candle_timestamp,
+                execution_row=execution_row,
+                trend_row=trend_row,
+                prediction=prediction,
+                costs=costs,
+                required_gross_return=costs.estimated_round_trip_rate,
+                position_before=position_before,
+                decision=decision,
+            )
+            snapshot.is_recovered = is_recovered
+            snapshot.recovery_note = (
+                "Closed candle replayed after worker downtime." if is_recovered else None
+            )
+            session.add(snapshot)
+            session.flush()
+
+            event_type = f"ANALYSIS_{decision.final_signal}"
+            status_message = f"Closed-candle analysis completed: {decision.final_signal}."
+            action_accounts = live_action_accounts | recovered_action_accounts
+            if account.id not in action_accounts:
+                if (
+                    account.strategy_code in DIRECT_ENTRY_STRATEGY_CODES
+                    and decision.final_signal == "BUY"
+                    and not account.has_open_position
+                ):
+                    try:
+                        self.broker.buy(
+                            session=session,
+                            experiment=experiment,
+                            account=account,
+                            mid_market_price=close_price,
+                            best_ask=historical_ask,
+                            atr=atr,
+                            costs=costs,
+                            executed_at=candle_end,
+                            reason=decision.reason,
+                            decision_id=snapshot.id,
+                            entry_candle_timestamp=candle_timestamp,
+                            stop_override=decision.stop_loss_override,
+                            take_profit_override=decision.take_profit_override,
+                            profile=profile,
+                            is_recovered=is_recovered,
+                            recovery_note=(
+                                "Signal reconstructed from a missed closed candle."
+                                if is_recovered
+                                else None
+                            ),
+                        )
+                        snapshot.action_executed = True
+                        recovered_trade_count += int(is_recovered)
+                        if is_recovered:
+                            event_type = "RECOVERED_ENTRY"
+                            status_message = (
+                                "A missed closed-candle purchase was reconstructed as a paper trade."
+                            )
+                        else:
+                            status_message = "The strategy authorized a simulated purchase."
+                    except ValueError as exc:
+                        snapshot.decision_reason = f"{snapshot.decision_reason}; buy_skipped={exc}"
+                        event_type = "ANALYSIS_HOLD"
+                        status_message = f"Simulated purchase skipped: {exc}"
+                elif decision.final_signal == "SELL" and account.has_open_position:
+                    self.broker.sell(
+                        session=session,
+                        experiment=experiment,
+                        account=account,
+                        mid_market_price=close_price,
+                        best_bid=historical_bid,
+                        costs=costs,
+                        executed_at=candle_end,
+                        reason=decision.reason,
+                        decision_id=snapshot.id,
+                        profile=profile,
+                        is_recovered=is_recovered,
+                        recovery_note=(
+                            "Exit reconstructed from a missed closed candle."
+                            if is_recovered
+                            else None
+                        ),
+                    )
+                    snapshot.action_executed = True
+                    recovered_trade_count += int(is_recovered)
+                    if is_recovered:
+                        event_type = "RECOVERED_EXIT"
+                        status_message = (
+                            "A missed closed-candle sale was reconstructed as a paper trade."
+                        )
+                    else:
+                        status_message = "The strategy authorized a simulated sale."
+
+            if account.id in recovered_action_accounts and account.strategy_code in events:
+                event_type, status_message = events[account.strategy_code]
+            events[account.strategy_code] = (event_type, status_message)
+            account.last_event = event_type
+            account.last_status_message = status_message
+
+        experiment.last_processed_candle_at = candle_timestamp
+        return events, recovered_trade_count
+
+    async def _evaluate_specialist_decisions(
+        self,
+        *,
+        accounts: list[StrategyAccount],
+        execution_indicators: pd.DataFrame,
+        current_index: int,
+        execution_row: pd.Series,
+        previous_row: pd.Series,
+        previous_previous_row: pd.Series,
+        trend_row: pd.Series,
+        ai_model_frame: pd.DataFrame,
+        prediction: ModelPrediction,
+        costs: ExecutionCosts,
+        profile: TradingProfile,
+        candle_timestamp: datetime,
+        candle_end: datetime,
+        atr: float,
+    ) -> dict[str, StrategyDecision]:
+        """Evaluate each specialist in its original order, before the selector."""
         # Evaluate all specialist candidates first. The selector receives the same
         # chronologically valid closed candle and cannot see future data.
         decisions: dict[str, StrategyDecision] = {}
@@ -909,7 +1063,23 @@ class TraderWorker:
                     current_index=current_index,
                 )
             decisions[account.strategy_code] = decision
+        return decisions
 
+    async def _evaluate_selector_decision(
+        self,
+        *,
+        experiment: Experiment,
+        accounts_by_code: dict[str, StrategyAccount],
+        execution_row: pd.Series,
+        trend_row: pd.Series,
+        ai_model_frame: pd.DataFrame,
+        costs: ExecutionCosts,
+        profile: TradingProfile,
+        candle_end: datetime,
+        atr: float,
+        decisions: dict[str, StrategyDecision],
+    ) -> None:
+        """Run the adaptive selector after specialists and synchronize its account state."""
         selector_account = accounts_by_code.get(ADAPTIVE_STRATEGY_SELECTOR)
         if selector_account is not None:
             selector_account.last_atr_14 = atr
@@ -1024,111 +1194,6 @@ class TraderWorker:
                 or selector_account.selector_ai_review_summary
             )
             decisions[ADAPTIVE_STRATEGY_SELECTOR] = selector_decision
-
-        for account in accounts:
-            decision = decisions[account.strategy_code]
-            position_before = "LONG" if account.has_open_position else "FLAT"
-            snapshot = self._build_decision_snapshot(
-                experiment=experiment,
-                account=account,
-                candle_timestamp=candle_timestamp,
-                execution_row=execution_row,
-                trend_row=trend_row,
-                prediction=prediction,
-                costs=costs,
-                required_gross_return=costs.estimated_round_trip_rate,
-                position_before=position_before,
-                decision=decision,
-            )
-            snapshot.is_recovered = is_recovered
-            snapshot.recovery_note = (
-                "Closed candle replayed after worker downtime." if is_recovered else None
-            )
-            session.add(snapshot)
-            session.flush()
-
-            event_type = f"ANALYSIS_{decision.final_signal}"
-            status_message = f"Closed-candle analysis completed: {decision.final_signal}."
-            action_accounts = live_action_accounts | recovered_action_accounts
-            if account.id not in action_accounts:
-                if (
-                    account.strategy_code in DIRECT_ENTRY_STRATEGY_CODES
-                    and decision.final_signal == "BUY"
-                    and not account.has_open_position
-                ):
-                    try:
-                        self.broker.buy(
-                            session=session,
-                            experiment=experiment,
-                            account=account,
-                            mid_market_price=close_price,
-                            best_ask=historical_ask,
-                            atr=atr,
-                            costs=costs,
-                            executed_at=candle_end,
-                            reason=decision.reason,
-                            decision_id=snapshot.id,
-                            entry_candle_timestamp=candle_timestamp,
-                            stop_override=decision.stop_loss_override,
-                            take_profit_override=decision.take_profit_override,
-                            profile=profile,
-                            is_recovered=is_recovered,
-                            recovery_note=(
-                                "Signal reconstructed from a missed closed candle."
-                                if is_recovered
-                                else None
-                            ),
-                        )
-                        snapshot.action_executed = True
-                        recovered_trade_count += int(is_recovered)
-                        if is_recovered:
-                            event_type = "RECOVERED_ENTRY"
-                            status_message = (
-                                "A missed closed-candle purchase was reconstructed as a paper trade."
-                            )
-                        else:
-                            status_message = "The strategy authorized a simulated purchase."
-                    except ValueError as exc:
-                        snapshot.decision_reason = f"{snapshot.decision_reason}; buy_skipped={exc}"
-                        event_type = "ANALYSIS_HOLD"
-                        status_message = f"Simulated purchase skipped: {exc}"
-                elif decision.final_signal == "SELL" and account.has_open_position:
-                    self.broker.sell(
-                        session=session,
-                        experiment=experiment,
-                        account=account,
-                        mid_market_price=close_price,
-                        best_bid=historical_bid,
-                        costs=costs,
-                        executed_at=candle_end,
-                        reason=decision.reason,
-                        decision_id=snapshot.id,
-                        profile=profile,
-                        is_recovered=is_recovered,
-                        recovery_note=(
-                            "Exit reconstructed from a missed closed candle."
-                            if is_recovered
-                            else None
-                        ),
-                    )
-                    snapshot.action_executed = True
-                    recovered_trade_count += int(is_recovered)
-                    if is_recovered:
-                        event_type = "RECOVERED_EXIT"
-                        status_message = (
-                            "A missed closed-candle sale was reconstructed as a paper trade."
-                        )
-                    else:
-                        status_message = "The strategy authorized a simulated sale."
-
-            if account.id in recovered_action_accounts and account.strategy_code in events:
-                event_type, status_message = events[account.strategy_code]
-            events[account.strategy_code] = (event_type, status_message)
-            account.last_event = event_type
-            account.last_status_message = status_message
-
-        experiment.last_processed_candle_at = candle_timestamp
-        return events, recovered_trade_count
 
     def _resolve_ai_pattern_outcomes(
         self,
