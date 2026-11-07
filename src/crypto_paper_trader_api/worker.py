@@ -491,6 +491,46 @@ class TraderWorker:
                     ):
                         events[code] = event
 
+        self._record_live_account_snapshots(
+            session=session,
+            experiment=experiment,
+            accounts=accounts,
+            now=now,
+            market_price=market_price,
+            best_bid=best_bid,
+            best_ask=best_ask,
+            costs=costs,
+            events=events,
+        )
+
+        experiment.buy_and_hold_current_capital = self._buy_and_hold_final_capital(
+            experiment.initial_capital,
+            experiment.first_market_price or market_price,
+            market_price,
+            costs,
+        )
+        experiment.last_market_event = "MULTI_STRATEGY_UPDATE"
+        experiment.error_message = None
+        self._mirror_hybrid_account(experiment, accounts)
+        session.commit()
+
+        if datetime.now(timezone.utc) >= self._as_utc(experiment.scheduled_end_at):
+            await self._finalize(session, experiment, datetime.now(timezone.utc), "FINISHED")
+
+    def _record_live_account_snapshots(
+        self,
+        *,
+        session: Session,
+        experiment: Experiment,
+        accounts: list[StrategyAccount],
+        now: datetime,
+        market_price: float,
+        best_bid: float,
+        best_ask: float,
+        costs: ExecutionCosts,
+        events: dict[str, tuple[str, str]],
+    ) -> None:
+        """Record each account's equity and market snapshot in the original order."""
         for account in accounts:
             equity = self.broker.record_equity(
                 session=session,
@@ -517,20 +557,6 @@ class TraderWorker:
                 event_type=event_type,
                 status_message=status_message,
             )
-
-        experiment.buy_and_hold_current_capital = self._buy_and_hold_final_capital(
-            experiment.initial_capital,
-            experiment.first_market_price or market_price,
-            market_price,
-            costs,
-        )
-        experiment.last_market_event = "MULTI_STRATEGY_UPDATE"
-        experiment.error_message = None
-        self._mirror_hybrid_account(experiment, accounts)
-        session.commit()
-
-        if datetime.now(timezone.utc) >= self._as_utc(experiment.scheduled_end_at):
-            await self._finalize(session, experiment, datetime.now(timezone.utc), "FINISHED")
 
     def _monitor_live_protective_exits(
         self,
