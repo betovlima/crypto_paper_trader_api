@@ -615,53 +615,9 @@ class TraderWorker:
         latest_complete_row(execution_indicators)
         latest_complete_row(trend_indicators)
 
-        required_columns = [
-            "ema_9",
-            "ema_20",
-            "ema_50",
-            "ema_200",
-            "rsi_14",
-            "atr_14",
-            "adx_14",
-            "relative_volume",
-            "volatility_20",
-        ]
-        valid_indices = execution_indicators.dropna(subset=required_columns).index.tolist()
-        if not valid_indices:
-            raise ValueError("Not enough complete candles for strategy analysis.")
-
-        initial_dashboard_snapshot = False
-        if experiment.last_processed_candle_at is None:
-            post_start_indices = [
-                index
-                for index in valid_indices
-                if index >= 2
-                and (
-                    self._to_datetime(execution_indicators.iloc[index]["timestamp"])
-                    + timedelta(seconds=TIMEFRAME_SECONDS[experiment.execution_timeframe])
-                )
-                > self._as_utc(experiment.started_at)
-            ]
-            if post_start_indices:
-                pending_indices = post_start_indices
-            else:
-                # Populate the technical/model dashboard immediately from the latest
-                # already-closed candle. Every account is action-blocked below, so this
-                # baseline snapshot cannot create a historical paper trade.
-                pending_indices = [valid_indices[-1]]
-                initial_dashboard_snapshot = True
-        else:
-            pending_indices = [
-                index
-                for index in valid_indices
-                if index >= 2
-                and self._is_pending_candle(
-                    candle_timestamp=self._to_datetime(
-                        execution_indicators.iloc[index]["timestamp"]
-                    ),
-                    experiment=experiment,
-                )
-            ]
+        pending_indices, initial_dashboard_snapshot = self._select_pending_candle_indices(
+            experiment, execution_indicators
+        )
 
         if not pending_indices:
             experiment.next_analysis_at = self._next_boundary(now, experiment.execution_timeframe)
@@ -726,6 +682,64 @@ class TraderWorker:
 
         experiment.next_analysis_at = self._next_boundary(now, experiment.execution_timeframe)
         return True, events
+
+    def _select_pending_candle_indices(
+        self, experiment: Experiment, execution_indicators: pd.DataFrame
+    ) -> tuple[list[int], bool]:
+        """Select causally eligible candles, including the first read-only dashboard snapshot.
+
+        Returns (indices, initial_dashboard_snapshot). The caller remains responsible
+        for replaying each pending candle and guarding against historical orders.
+        """
+        required_columns = [
+            "ema_9",
+            "ema_20",
+            "ema_50",
+            "ema_200",
+            "rsi_14",
+            "atr_14",
+            "adx_14",
+            "relative_volume",
+            "volatility_20",
+        ]
+        valid_indices = execution_indicators.dropna(subset=required_columns).index.tolist()
+        if not valid_indices:
+            raise ValueError("Not enough complete candles for strategy analysis.")
+
+        initial_dashboard_snapshot = False
+        if experiment.last_processed_candle_at is None:
+            post_start_indices = [
+                index
+                for index in valid_indices
+                if index >= 2
+                and (
+                    self._to_datetime(execution_indicators.iloc[index]["timestamp"])
+                    + timedelta(seconds=TIMEFRAME_SECONDS[experiment.execution_timeframe])
+                )
+                > self._as_utc(experiment.started_at)
+            ]
+            if post_start_indices:
+                pending_indices = post_start_indices
+            else:
+                # Populate the technical/model dashboard immediately from the latest
+                # already-closed candle. Every account is action-blocked below, so this
+                # baseline snapshot cannot create a historical paper trade.
+                pending_indices = [valid_indices[-1]]
+                initial_dashboard_snapshot = True
+        else:
+            pending_indices = [
+                index
+                for index in valid_indices
+                if index >= 2
+                and self._is_pending_candle(
+                    candle_timestamp=self._to_datetime(
+                        execution_indicators.iloc[index]["timestamp"]
+                    ),
+                    experiment=experiment,
+                )
+            ]
+
+        return pending_indices, initial_dashboard_snapshot
 
     async def _process_candle_index(
         self,
