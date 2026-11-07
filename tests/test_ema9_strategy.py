@@ -191,24 +191,45 @@ def test_classic_variant_arms_exit_below_bearish_reversal_candle() -> None:
     assert item.trailing_stop_price is None
 
 
-def test_trend_follower_raises_stop_to_latest_closed_candle_low() -> None:
-    strategy = Ema9Setup91Strategy(Settings(), mode=Ema9Setup91Strategy.TREND_FOLLOWER)
+def test_trend_follower_raises_stop_to_fibonacci_618_with_atr_buffer() -> None:
+    settings = Settings(
+        fibonacci_pivot_bars=2,
+        fibonacci_min_impulse_atr=2.0,
+        fibonacci_stop_buffer_atr=0.25,
+        ema9_trend_fibonacci_stop_level=0.618,
+    )
+    strategy = Ema9Setup91Strategy(settings, mode=Ema9Setup91Strategy.TREND_FOLLOWER)
     item = account(EMA9_SETUP_91_COST_AWARE)
     item.asset_quantity = 1.0
     item.cash_balance = 0.0
     item.stop_loss_price = 95.0
     item.setup_status = "IN_POSITION"
 
+    history = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-07-20", periods=10, freq="30min", tz="UTC"),
+            "open": [99, 98, 97, 92, 96, 100, 103, 106, 108, 107],
+            "high": [100, 99, 98, 97, 100, 103, 106, 109, 110, 109],
+            "low": [98, 97, 96, 90, 95, 99, 102, 105, 107, 106],
+            "close": [99, 98, 97, 95, 99, 102, 105, 108, 109, 108],
+            "atr_14": [5.0] * 10,
+            "ema_9": [96.0, 96.2, 96.4, 96.6, 97.0, 98.0, 99.0, 100.0, 101.0, 102.0],
+        }
+    )
     decision = strategy.analyze_candle(
         account=item,
-        current_row=row(101.0, high=104.0, low=99.0, close=103.0),
-        previous_row=row(100.5),
-        previous_previous_row=row(100.0),
+        current_row=history.iloc[-1],
+        previous_row=history.iloc[-2],
+        previous_previous_row=history.iloc[-3],
         costs=costs(),
         now=datetime.now(timezone.utc),
+        history=history,
+        current_index=len(history) - 1,
     )
 
+    expected_stop = 110.0 - 0.618 * (110.0 - 90.0) - 0.25 * 5.0
     assert decision.final_signal == "HOLD"
-    assert item.trailing_stop_price == 99.0
+    assert item.trailing_stop_price == expected_stop
     assert item.stop_loss_price == 95.0
-    assert item.stop_management_mode == "TREND_FOLLOWER"
+    assert item.stop_management_mode == "FIBONACCI_TREND_FOLLOWER"
+    assert "fibonacci_trailing_stop_raised" in decision.reason

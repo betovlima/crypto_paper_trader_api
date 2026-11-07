@@ -7,6 +7,7 @@ CURRENT_HYBRID = "CURRENT_HYBRID"
 EMA_CROSSOVER_COST_AWARE = "EMA_CROSSOVER_COST_AWARE"
 EMA_CROSSOVER = EMA_CROSSOVER_COST_AWARE
 EMA_PULLBACK = "EMA_PULLBACK"
+FIBONACCI_TREND_PULLBACK = "FIBONACCI_TREND_PULLBACK"
 
 EMA9_SETUP_91 = "EMA9_SETUP_91"
 EMA9_SETUP_91_COST_AWARE = "EMA9_SETUP_91_COST_AWARE"
@@ -31,6 +32,7 @@ ACTIVE_STRATEGY_CODES = (
     CURRENT_HYBRID,
     EMA_CROSSOVER,
     EMA_PULLBACK,
+    FIBONACCI_TREND_PULLBACK,
     LARRY_WILLIAMS_91_CLASSIC,
     LARRY_WILLIAMS_91_TREND_FOLLOWER,
     LARRY_VOLATILITY_BREAKOUT,
@@ -43,9 +45,10 @@ STRATEGY_DISPLAY_NAMES = {
     CURRENT_HYBRID: "Trend, Momentum, Volume and AI Confirmation",
     EMA_CROSSOVER: "Fast and Slow Exponential Average Crossover",
     EMA_PULLBACK: "Pullback to Exponential Moving Averages",
+    FIBONACCI_TREND_PULLBACK: "Fibonacci Trend Pullback",
     EMA9_SETUP_91: "EMA 9 Reversal and Price Breakout",
     LARRY_WILLIAMS_91_CLASSIC: "EMA 9 Reversal and Price Breakout",
-    LARRY_WILLIAMS_91_TREND_FOLLOWER: "EMA 9 Reversal with Trailing Stop",
+    LARRY_WILLIAMS_91_TREND_FOLLOWER: "EMA 9 Reversal with Fibonacci Trailing Stop",
     LARRY_VOLATILITY_BREAKOUT: "Volatility Range Breakout",
     STORMER_FILHA_MAL_CRIADA: "Seven-EMA Trend Pullback (Stormer)",
     LBR_310_ANTI_CONTEXT: "Trend Resumption with LBR 3/10",
@@ -73,6 +76,12 @@ STRATEGY_DESCRIPTIONS = {
         "toward the fast or slow EMA and close back above the fast EMA with trend and volume "
         "confirmation."
     ),
+    FIBONACCI_TREND_PULLBACK: (
+        "Detects a causal bullish impulse, waits for a retracement into the 38.2%-61.8% zone "
+        "and buys only after a bullish closed-candle recovery above EMA 9. The initial stop "
+        "sits below 78.6% with an ATR buffer, while the structural trailing stop follows the "
+        "50% retracement of each new confirmed impulse without ever moving down."
+    ),
     LARRY_WILLIAMS_91_CLASSIC: (
         "Classic Setup 9.1: EMA 9 must turn strictly from down to up on a bullish closed candle "
         "that crosses and closes above the average. A later bullish candle must close above "
@@ -81,9 +90,9 @@ STRATEGY_DESCRIPTIONS = {
     ),
     LARRY_WILLIAMS_91_TREND_FOLLOWER: (
         "Adapted Setup 9.1 with the same strict EMA 9 reversal and later closed-candle breakout "
-        "confirmation. A wick-only crossing does not enter. After entry, the protective stop "
-        "follows the low of each newly closed candle, never moves down, and exits on the stop "
-        "or a bearish EMA 9 reversal."
+        "confirmation. A wick-only crossing does not enter. After entry, a causal Fibonacci "
+        "stop protects the 61.8% retracement of the latest confirmed bullish impulse with an "
+        "ATR buffer, never moves down, and exits on that stop or a bearish EMA 9 reversal."
     ),
     LARRY_VOLATILITY_BREAKOUT: (
         "Intraday volatility breakout inspired by Larry Williams. It compares the current "
@@ -125,6 +134,7 @@ DIRECT_ENTRY_STRATEGY_CODES = {
     LARRY_WILLIAMS_91_TREND_FOLLOWER,
     EMA_CROSSOVER,
     EMA_PULLBACK,
+    FIBONACCI_TREND_PULLBACK,
     LARRY_VOLATILITY_BREAKOUT,
     STORMER_FILHA_MAL_CRIADA,
     LBR_310_ANTI_CONTEXT,

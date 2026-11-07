@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .common import *  # noqa: F403
+from ..risk_management.fibonacci import calculate_bullish_fibonacci_stop
 
 class Ema9Setup91Strategy:
     """Strict Larry Williams Setup 9.1 with selectable stop management.
@@ -12,8 +13,9 @@ class Ema9Setup91Strategy:
     - the initial protective stop is that candle low.
 
     ``CLASSIC`` keeps the setup stop and later arms an exit below the low of the
-    candle that turns EMA 9 down. ``TREND_FOLLOWER`` raises a candle-low trailing
-    stop after every closed candle and exits when EMA 9 turns bearish.
+    candle that turns EMA 9 down. ``TREND_FOLLOWER`` raises a causal Fibonacci
+    structural stop below the latest confirmed bullish impulse and exits when EMA 9
+    turns bearish.
     """
 
     CLASSIC = "CLASSIC"
@@ -51,6 +53,8 @@ class Ema9Setup91Strategy:
         costs: ExecutionCosts,
         now: datetime,
         profile: TradingProfile | None = None,
+        history: pd.DataFrame | None = None,
+        current_index: int | None = None,
     ) -> StrategyDecision:
         active_profile = profile or get_trading_profile(None)
         close = float(current_row["close"])
@@ -73,7 +77,11 @@ class Ema9Setup91Strategy:
         account.ema_9 = ema9
         account.ema_9_slope = current_slope
         account.ema_9_direction = direction
-        account.stop_management_mode = self.mode
+        account.stop_management_mode = (
+            "FIBONACCI_TREND_FOLLOWER"
+            if self.mode == self.TREND_FOLLOWER
+            else self.mode
+        )
 
         reasons = [
             f"profile={active_profile.code}",
@@ -121,23 +129,70 @@ class Ema9Setup91Strategy:
                         setup_status="IN_POSITION",
                     )
 
-                candidate_stop = low
                 active_stop = max(
-                    value
-                    for value in (
-                        float(account.stop_loss_price or 0.0),
-                        float(account.trailing_stop_price or 0.0),
-                    )
+                    float(account.stop_loss_price or 0.0),
+                    float(account.trailing_stop_price or 0.0),
                 )
-                if candidate_stop > active_stop and candidate_stop < close:
-                    account.trailing_stop_price = candidate_stop
-                    account.last_setup_event = "CANDLE_LOW_STOP_RAISED"
-                    account.last_setup_event_reason = (
-                        "The trend-following stop was raised to the low of the latest closed candle."
+                fibonacci_stop = None
+                if history is not None and not history.empty:
+                    fibonacci_stop = calculate_bullish_fibonacci_stop(
+                        history,
+                        current_price=close,
+                        current_index=(
+                            len(history) - 1 if current_index is None else current_index
+                        ),
+                        retracement_ratio=(
+                            self.settings.ema9_trend_fibonacci_stop_level
+                            if self.settings is not None
+                            else 0.618
+                        ),
+                        buffer_atr_multiplier=(
+                            self.settings.fibonacci_stop_buffer_atr
+                            if self.settings is not None
+                            else 0.25
+                        ),
+                        pivot_bars=(
+                            self.settings.fibonacci_pivot_bars
+                            if self.settings is not None
+                            else 3
+                        ),
+                        lookback_bars=(
+                            self.settings.fibonacci_impulse_lookback_bars
+                            if self.settings is not None
+                            else 120
+                        ),
+                        min_impulse_atr=(
+                            self.settings.fibonacci_min_impulse_atr
+                            if self.settings is not None
+                            else 2.0
+                        ),
                     )
-                    reasons.append(f"candle_low_trailing_stop_raised={candidate_stop:.8f}")
+
+                if (
+                    fibonacci_stop is not None
+                    and active_stop < fibonacci_stop.stop_price < close
+                ):
+                    account.trailing_stop_price = fibonacci_stop.stop_price
+                    account.last_setup_event = "FIBONACCI_STOP_RAISED"
+                    account.last_setup_event_reason = (
+                        "The trend-following stop was raised below the configured Fibonacci "
+                        "retracement of the latest confirmed bullish impulse."
+                    )
+                    reasons.extend(
+                        [
+                            f"fibonacci_impulse_low={fibonacci_stop.impulse.low_price:.8f}",
+                            f"fibonacci_impulse_high={fibonacci_stop.impulse.high_price:.8f}",
+                            f"fibonacci_impulse_size_atr={fibonacci_stop.impulse.size_atr:.6f}",
+                            f"fibonacci_stop_ratio={fibonacci_stop.retracement_ratio:.3f}",
+                            f"fibonacci_level={fibonacci_stop.retracement_price:.8f}",
+                            f"fibonacci_atr_buffer={fibonacci_stop.atr_buffer:.8f}",
+                            f"fibonacci_trailing_stop_raised={fibonacci_stop.stop_price:.8f}",
+                        ]
+                    )
+                elif fibonacci_stop is None:
+                    reasons.append("fibonacci_stop_waiting_for_confirmed_impulse")
                 else:
-                    reasons.append(f"candle_low_stop_unchanged={active_stop:.8f}")
+                    reasons.append(f"fibonacci_stop_unchanged={active_stop:.8f}")
 
                 reasons.append("trend_follower_position_maintained")
                 return StrategyDecision(
@@ -148,11 +203,8 @@ class Ema9Setup91Strategy:
                     "; ".join(reasons),
                     setup_status="IN_POSITION",
                     stop_loss_override=max(
-                        value
-                        for value in (
-                            account.stop_loss_price or 0.0,
-                            account.trailing_stop_price or 0.0,
-                        )
+                        float(account.stop_loss_price or 0.0),
+                        float(account.trailing_stop_price or 0.0),
                     ),
                 )
 

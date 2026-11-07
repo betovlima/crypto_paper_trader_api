@@ -36,6 +36,7 @@ from .multi_strategy import (
     Ema9Setup91Strategy,
     EmaCrossoverCostAwareStrategy,
     EmaPullbackStrategy,
+    FibonacciTrendPullbackStrategy,
     HybridComparisonStrategy,
     LarryVolatilityBreakoutStrategy,
     Lbr310AntiContextStrategy,
@@ -51,6 +52,7 @@ from .strategy_codes import (
     DYNAMIC_RISK_STRATEGY_CODES,
     EMA_CROSSOVER_COST_AWARE,
     EMA_PULLBACK,
+    FIBONACCI_TREND_PULLBACK,
     EMA9_CLASSIC_STRATEGY_CODES,
     EMA9_STRATEGY_CODES,
     LARRY_VOLATILITY_BREAKOUT,
@@ -79,6 +81,7 @@ class TraderWorker:
         self.hybrid_strategy = HybridComparisonStrategy(settings)
         self.ema_crossover_strategy = EmaCrossoverCostAwareStrategy(settings)
         self.ema_pullback_strategy = EmaPullbackStrategy(settings)
+        self.fibonacci_trend_pullback_strategy = FibonacciTrendPullbackStrategy(settings)
         self.larry_volatility_strategy = LarryVolatilityBreakoutStrategy(settings)
         self.stormer_filha_mal_criada_strategy = StormerFilhaMalCriadaStrategy(settings)
         self.lbr_310_anti_strategy = Lbr310AntiContextStrategy(settings)
@@ -833,6 +836,15 @@ class TraderWorker:
                     costs=costs,
                     profile=profile,
                 )
+            elif account.strategy_code == FIBONACCI_TREND_PULLBACK:
+                decision = self.fibonacci_trend_pullback_strategy.decide(
+                    account=account,
+                    history=execution_indicators,
+                    current_index=current_index,
+                    trend_row=trend_row,
+                    costs=costs,
+                    profile=profile,
+                )
             elif account.strategy_code == LARRY_VOLATILITY_BREAKOUT:
                 lookback_start = max(0, current_index - self.settings.larry_breakout_lookback)
                 previous_window = execution_indicators.iloc[lookback_start:current_index]
@@ -886,6 +898,8 @@ class TraderWorker:
                     costs=costs,
                     profile=profile,
                     now=candle_timestamp,
+                    history=execution_indicators,
+                    current_index=current_index,
                 )
             decisions[account.strategy_code] = decision
 
@@ -1885,6 +1899,8 @@ def ensure_strategy_accounts(
     session: Session,
     experiment: Experiment,
     strategy_codes: tuple[str, ...] = ACTIVE_STRATEGY_CODES,
+    *,
+    flush: bool = True,
 ) -> list[StrategyAccount]:
     existing = {
         row.strategy_code: row
@@ -1896,8 +1912,10 @@ def ensure_strategy_accounts(
         if code in existing:
             existing[code].display_name = STRATEGY_DISPLAY_NAMES[code]
             existing[code].stop_management_mode = (
-                "TREND_FOLLOWER"
+                "FIBONACCI_TREND_FOLLOWER"
                 if code == LARRY_WILLIAMS_91_TREND_FOLLOWER
+                else "FIBONACCI_DYNAMIC"
+                if code == FIBONACCI_TREND_PULLBACK
                 else "CLASSIC"
                 if code in EMA9_CLASSIC_STRATEGY_CODES
                 else "AI_DYNAMIC"
@@ -1952,8 +1970,10 @@ def ensure_strategy_accounts(
             cooldown_until=(experiment.cooldown_until if copy_legacy_hybrid else None),
             setup_status="IDLE" if code in EMA9_STRATEGY_CODES or code == STORMER_FILHA_MAL_CRIADA else "N/A",
             stop_management_mode=(
-                "TREND_FOLLOWER"
+                "FIBONACCI_TREND_FOLLOWER"
                 if code == LARRY_WILLIAMS_91_TREND_FOLLOWER
+                else "FIBONACCI_DYNAMIC"
+                if code == FIBONACCI_TREND_PULLBACK
                 else "CLASSIC"
                 if code in EMA9_CLASSIC_STRATEGY_CODES
                 else "AI_DYNAMIC"
@@ -1981,7 +2001,8 @@ def ensure_strategy_accounts(
         )
         session.add(account)
         existing[code] = account
-    session.flush()
+    if flush:
+        session.flush()
     return [existing[code] for code in strategy_codes]
 
 

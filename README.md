@@ -1,4 +1,48 @@
-# Crypto Paper Trader API — v0.16.10
+# Crypto Paper Trader API
+
+## v0.16.17 — SQLite parent-row strategy synchronization
+
+- replaces the foreign-key bypass fallback with an integrity-enforced `INSERT ... SELECT` directly from `experiments`;
+- keeps `PRAGMA foreign_keys=ON` during the complete recovery operation;
+- copies the parent identifier inside SQLite without converting it through Python;
+- inserts only missing `(experiment_id, strategy_code)` pairs and preserves every existing account ID and history row;
+- validates `strategy_accounts` with `PRAGMA foreign_key_check` before commit;
+- retains the normal ORM path for healthy databases and uses the parent-row path only after two confirmed FK failures;
+- regression suite: 103 tests passed.
+
+## v0.16.16 — legacy SQLite synchronization correction
+
+- removes the redundant parent re-query that produced false `experiment not present` errors after a legacy table rebuild;
+- reads experiments and creates strategy accounts on the same connection;
+- compares `PRAGMA foreign_key_check` before and after the compatibility transaction;
+- blocks the commit only when synchronization introduces a new violation or leaves an invalid `strategy_accounts` row;
+- preserves unrelated legacy violations for separate diagnosis instead of preventing the API from starting.
+
+## v0.16.15 — verified SQLite strategy-account recovery
+
+- disposes pooled SQLite connections after rebuilding `strategy_accounts`;
+- retries startup synchronization with fresh schema metadata;
+- adds a last-resort compatibility transaction that is committed only when `PRAGMA foreign_key_check` reports no violations;
+- preserves all experiments, accounts, trades, decisions and snapshots.
+- regression suite: 100 tests passed.
+
+
+## v0.16.14 — startup foreign-key recovery
+
+- Repairs legacy `strategy_accounts` foreign keys that no longer point to the current `experiments` table.
+- Preserves valid strategy-account rows and their identifiers during the table rebuild.
+- Retries startup account synchronization once after a foreign-key failure.
+- Prevents a newly added strategy from blocking API startup on an upgraded SQLite database.
+
+## v0.16.13 — Fibonacci trend pullback and structural stops
+
+- Adds `FIBONACCI_TREND_PULLBACK` as a new independent paper strategy without changing the entry rules of the existing strategies.
+- Detects bullish impulses causally from closed MEXC candles, using confirmed pivot lows and no future data.
+- Enters only after a retracement into the 38.2%-61.8% zone and a bullish closed-candle recovery above EMA 9.
+- Places the initial stop below 78.6% with an ATR buffer and uses the 50% retracement as a one-way structural trailing stop.
+- Updates only the Larry Williams 9.1 trend-follower stop management: it now protects the 61.8% retracement of the latest confirmed bullish impulse with an ATR buffer.
+- Keeps the Larry Williams 9.1 classic strategy unchanged.
+- Preserves PAPER_ONLY execution and public MEXC Spot data as the market source.
 
 ## v0.16.10 — adaptive strategy recovery
 

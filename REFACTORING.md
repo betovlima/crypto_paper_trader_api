@@ -1,3 +1,13 @@
+# Refactoring notes
+
+## v0.16.17 — parent-row SQLite compatibility path
+
+The final startup recovery no longer disables SQLite foreign keys. Missing strategy accounts are created with `INSERT ... SELECT` from the `experiments` table, so the parent identifier remains in SQLite's native storage representation and is validated by the database in the same statement. Existing accounts and dependent history records are not rebuilt by this final path.
+
+## v0.16.13
+
+Fibonacci logic is isolated under `risk_management/fibonacci/` so swing detection, level calculation and stop policies remain reusable and testable. The new `FibonacciTrendPullbackStrategy` lives in its own strategy module. Existing strategies remain separate; only the trend-following Larry Williams 9.1 variant imports the shared Fibonacci stop policy.
+
 # API refactoring summary
 
 ## Implemented
@@ -38,3 +48,19 @@ src/crypto_paper_trader_api/
 - Focused regression suite covering routes, strategies, indicators and local adaptive research: 23 passed.
 - Full remaining suite: 85 passed, 7 failed.
 - The seven failures already concern features that are inconsistent with the received source version: missing historical-refresh methods, missing timeframe validation, missing range-bound indicator output, and selector snapshot fallback. They are not caused by the removal of the paid research provider or by the strategy package split.
+## v0.16.14 — legacy foreign-key recovery
+
+- `init_database()` now validates the parent foreign key of `strategy_accounts`.
+- Legacy schemas are rebuilt from SQLAlchemy metadata while preserving valid row IDs and data.
+- Startup synchronization retries once after a SQLite foreign-key failure.
+- Runtime database files remain outside the release package and must be preserved during upgrades.
+
+
+
+## v0.16.15 — verified SQLite fallback
+
+The startup synchronization now recreates pooled connections after schema repair. If a legacy SQLite file still rejects a valid strategy-account insert, the API performs a transaction with enforcement temporarily disabled, verifies every experiment parent, runs `PRAGMA foreign_key_check`, and commits only when no violation exists.
+
+## v0.16.16 — verified fallback parent lookup fix
+
+The SQLite compatibility synchronization no longer repeats a parent lookup for ORM objects already loaded from `experiments`. Some legacy files returned a false negative for that redundant lookup immediately after schema replacement. Safety remains enforced by comparing a database-wide `PRAGMA foreign_key_check` before and after the transaction. The commit is rejected only when the synchronization introduces a new violation or leaves an invalid `strategy_accounts` row.
